@@ -5,7 +5,8 @@ Rust CLI that announces agent task completion with `speech-dispatcher` (`spd-say
 ## Features
 
 - Announces only end-of-task events.
-- Speaks `"<Agent> finished task in <project>"`.
+- Speaks `"<Agent> finished a <event_kind> task in <project>"` by default.
+- Supports configurable announcement templates (global and per-agent).
 - Auto-setup for:
   - Claude Code (`~/.claude/settings.json` Stop hook)
   - Codex (`~/.codex/config.toml` notify command)
@@ -28,6 +29,13 @@ agitiser-notify remove
 
 # Health checks
 agitiser-notify doctor
+
+# Manage spoken message templates
+agitiser-notify config template get
+agitiser-notify config template set --value '{{agent}} finished {{event_kind}} in {{project}}'
+agitiser-notify config template get --agent codex
+agitiser-notify config template set --agent codex --value 'Codex done in {{project}}'
+agitiser-notify config template reset --agent codex
 ```
 
 ## Ingest API
@@ -59,3 +67,18 @@ Where payload contains at minimum:
   "cwd": "/absolute/path/to/project"
 }
 ```
+
+## Template Variables
+
+Templates use Handlebars-style placeholders:
+
+- `{{agent}}` (display name, for example `Codex`)
+- `{{event_kind}}` (normalized terminal event kind, for example `task-end`)
+- `{{project}}` (project name inferred from `cwd`)
+- `{{cwd}}` (full current working directory when present)
+
+Template precedence is:
+
+1. Per-agent override (`--agent claude|codex|generic`)
+2. Global template
+3. Built-in default message

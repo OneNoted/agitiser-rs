@@ -9,7 +9,7 @@ use clap::Parser;
 use serde_json::Value;
 use std::io::{IsTerminal, Read};
 
-use crate::cli::{Cli, Commands};
+use crate::cli::{Cli, Commands, ConfigCommand, TemplateCommand};
 
 fn main() {
     if let Err(error) = run() {
@@ -31,7 +31,97 @@ fn run() -> Result<()> {
             verbose,
         } => ingest_event(agent, payload, trailing_payload, source, verbose),
         Commands::Doctor => doctor(),
+        Commands::Config { command } => handle_config(command),
     }
+}
+
+fn handle_config(command: ConfigCommand) -> Result<()> {
+    match command {
+        ConfigCommand::Template { command } => handle_template_config(command),
+    }
+}
+
+fn template_scope_label(agent: Option<agitiser_notify::agent::Agent>) -> &'static str {
+    match agent {
+        Some(agitiser_notify::agent::Agent::Claude) => "claude",
+        Some(agitiser_notify::agent::Agent::Codex) => "codex",
+        Some(agitiser_notify::agent::Agent::Generic) => "generic",
+        None => "global",
+    }
+}
+
+fn template_slot<'a>(
+    templates: &'a state::TemplateConfig,
+    agent: Option<agitiser_notify::agent::Agent>,
+) -> &'a Option<String> {
+    match agent {
+        Some(agitiser_notify::agent::Agent::Claude) => &templates.agents.claude,
+        Some(agitiser_notify::agent::Agent::Codex) => &templates.agents.codex,
+        Some(agitiser_notify::agent::Agent::Generic) => &templates.agents.generic,
+        None => &templates.global,
+    }
+}
+
+fn template_slot_mut<'a>(
+    templates: &'a mut state::TemplateConfig,
+    agent: Option<agitiser_notify::agent::Agent>,
+) -> &'a mut Option<String> {
+    match agent {
+        Some(agitiser_notify::agent::Agent::Claude) => &mut templates.agents.claude,
+        Some(agitiser_notify::agent::Agent::Codex) => &mut templates.agents.codex,
+        Some(agitiser_notify::agent::Agent::Generic) => &mut templates.agents.generic,
+        None => &mut templates.global,
+    }
+}
+
+fn handle_template_config(command: TemplateCommand) -> Result<()> {
+    match command {
+        TemplateCommand::Get { agent } => template_get(agent),
+        TemplateCommand::Set { agent, value } => template_set(agent, value),
+        TemplateCommand::Reset { agent } => template_reset(agent),
+    }
+}
+
+fn template_get(agent: Option<agitiser_notify::agent::Agent>) -> Result<()> {
+    let state_path = paths::local_state_path()?;
+    let local_state = state::load(&state_path)?;
+    if let Some(value) = template_slot(&local_state.templates, agent) {
+        println!("{value}");
+    } else {
+        println!("<unset>");
+    }
+    Ok(())
+}
+
+fn template_set(agent: Option<agitiser_notify::agent::Agent>, value: String) -> Result<()> {
+    agitiser_notify::template::validate_template(&value)?;
+
+    let state_path = paths::local_state_path()?;
+    let mut local_state = state::load(&state_path)?;
+    let slot = template_slot_mut(&mut local_state.templates, agent);
+    if slot.as_deref() == Some(value.as_str()) {
+        println!("template for {} unchanged", template_scope_label(agent));
+        return Ok(());
+    }
+
+    *slot = Some(value);
+    state::save(&state_path, &local_state)?;
+    println!("template for {} updated", template_scope_label(agent));
+    Ok(())
+}
+
+fn template_reset(agent: Option<agitiser_notify::agent::Agent>) -> Result<()> {
+    let state_path = paths::local_state_path()?;
+    let mut local_state = state::load(&state_path)?;
+    let slot = template_slot_mut(&mut local_state.templates, agent);
+    if slot.take().is_none() {
+        println!("template for {} already unset", template_scope_label(agent));
+        return Ok(());
+    }
+
+    state::save(&state_path, &local_state)?;
+    println!("template for {} reset", template_scope_label(agent));
+    Ok(())
 }
 
 fn setup_agents(agents: Vec<SetupAgent>) -> Result<()> {

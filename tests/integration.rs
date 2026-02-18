@@ -4,7 +4,7 @@ use agitiser_notify::integrations::{claude, codex};
 use agitiser_notify::state::LocalState;
 use serde_json::json;
 use std::io::Write;
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempDir};
 
 // --- Claude setup/remove round-trip ---
 
@@ -231,4 +231,120 @@ fn codex_preserves_and_restores_previous_notify() {
     assert!(codex::remove(&path, &mut state).expect("remove"));
     assert!(state.codex.previous_notify.is_none());
     assert!(codex::is_configured(&path).expect("should not be configured") == false);
+}
+
+fn temp_home() -> TempDir {
+    tempfile::tempdir().expect("temp home dir")
+}
+
+#[test]
+fn config_template_global_round_trip() {
+    let bin = env!("CARGO_BIN_EXE_agitiser-notify");
+    let home = temp_home();
+    let template = "{{agent}} finished {{event_kind}} in {{project}}";
+
+    let set_output = std::process::Command::new(bin)
+        .args(["config", "template", "set", "--value", template])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run template set");
+    assert!(set_output.status.success());
+
+    let get_output = std::process::Command::new(bin)
+        .args(["config", "template", "get"])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run template get");
+    assert!(get_output.status.success());
+    assert_eq!(String::from_utf8_lossy(&get_output.stdout).trim(), template);
+
+    let reset_output = std::process::Command::new(bin)
+        .args(["config", "template", "reset"])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run template reset");
+    assert!(reset_output.status.success());
+
+    let get_after_reset = std::process::Command::new(bin)
+        .args(["config", "template", "get"])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run template get after reset");
+    assert!(get_after_reset.status.success());
+    assert_eq!(String::from_utf8_lossy(&get_after_reset.stdout).trim(), "<unset>");
+}
+
+#[test]
+fn config_template_agent_override_round_trip() {
+    let bin = env!("CARGO_BIN_EXE_agitiser-notify");
+    let home = temp_home();
+    let template = "Codex override {{project}}";
+
+    let set_output = std::process::Command::new(bin)
+        .args([
+            "config",
+            "template",
+            "set",
+            "--agent",
+            "codex",
+            "--value",
+            template,
+        ])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run template set");
+    assert!(set_output.status.success());
+
+    let get_agent_output = std::process::Command::new(bin)
+        .args(["config", "template", "get", "--agent", "codex"])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run template get");
+    assert!(get_agent_output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&get_agent_output.stdout).trim(),
+        template
+    );
+
+    let get_global_output = std::process::Command::new(bin)
+        .args(["config", "template", "get"])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run global template get");
+    assert!(get_global_output.status.success());
+    assert_eq!(String::from_utf8_lossy(&get_global_output.stdout).trim(), "<unset>");
+
+    let reset_agent_output = std::process::Command::new(bin)
+        .args(["config", "template", "reset", "--agent", "codex"])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run template reset");
+    assert!(reset_agent_output.status.success());
+
+    let get_agent_after_reset = std::process::Command::new(bin)
+        .args(["config", "template", "get", "--agent", "codex"])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run template get after reset");
+    assert!(get_agent_after_reset.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&get_agent_after_reset.stdout).trim(),
+        "<unset>"
+    );
+}
+
+#[test]
+fn config_template_set_rejects_invalid_syntax() {
+    let bin = env!("CARGO_BIN_EXE_agitiser-notify");
+    let home = temp_home();
+
+    let output = std::process::Command::new(bin)
+        .args(["config", "template", "set", "--value", "{{#if"])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run template set");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("invalid template syntax"));
 }

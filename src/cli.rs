@@ -46,4 +46,34 @@ pub enum Commands {
         verbose: bool,
     },
     Doctor,
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConfigCommand {
+    Template {
+        #[command(subcommand)]
+        command: TemplateCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TemplateCommand {
+    Get {
+        #[arg(long, value_enum)]
+        agent: Option<Agent>,
+    },
+    Set {
+        #[arg(long, value_enum)]
+        agent: Option<Agent>,
+        #[arg(long)]
+        value: String,
+    },
+    Reset {
+        #[arg(long, value_enum)]
+        agent: Option<Agent>,
+    },
 }
