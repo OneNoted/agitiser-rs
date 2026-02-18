@@ -167,7 +167,21 @@ fn ingest_event(
         return Ok(());
     };
 
-    speech::speak(&event)?;
+    let state_path = paths::local_state_path()?;
+    let local_state = match state::load(&state_path) {
+        Ok(state) => state,
+        Err(error) => {
+            if verbose {
+                eprintln!(
+                    "ingest: failed to load {} ({error:#}), using default template",
+                    state_path.display()
+                );
+            }
+            state::LocalState::default()
+        }
+    };
+
+    speech::speak(&event, &local_state.templates)?;
     if verbose {
         let cwd = event
             .cwd

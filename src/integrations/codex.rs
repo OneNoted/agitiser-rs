@@ -153,6 +153,7 @@ mod tests {
             r#"notify = ["notify-send", "Codex"]"#.parse::<DocumentMut>().expect("valid toml");
         let mut state = LocalState {
             codex: CodexState::default(),
+            templates: crate::state::TemplateConfig::default(),
         };
         let managed = vec![
             "/tmp/agitiser-notify".to_string(),
@@ -180,6 +181,7 @@ mod tests {
             codex: CodexState {
                 previous_notify: Some(vec!["notify-send".to_string(), "Codex".to_string()]),
             },
+            templates: crate::state::TemplateConfig::default(),
         };
 
         assert!(apply_remove(&mut doc, &mut state));

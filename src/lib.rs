@@ -4,3 +4,4 @@ pub mod integrations;
 pub mod paths;
 pub mod speech;
 pub mod state;
+pub mod template;

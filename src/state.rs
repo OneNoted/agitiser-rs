@@ -7,12 +7,32 @@ use std::path::Path;
 pub struct LocalState {
     #[serde(default)]
     pub codex: CodexState,
+    #[serde(default)]
+    pub templates: TemplateConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CodexState {
     #[serde(default)]
     pub previous_notify: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TemplateConfig {
+    #[serde(default)]
+    pub global: Option<String>,
+    #[serde(default)]
+    pub agents: AgentTemplateConfig,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentTemplateConfig {
+    #[serde(default)]
+    pub claude: Option<String>,
+    #[serde(default)]
+    pub codex: Option<String>,
+    #[serde(default)]
+    pub generic: Option<String>,
 }
 
 pub fn load(path: &Path) -> Result<LocalState> {

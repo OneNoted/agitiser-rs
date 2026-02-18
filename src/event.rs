@@ -22,8 +22,9 @@ pub fn normalize(agent: Agent, payload: Value) -> Option<NormalizedEvent> {
 
 pub fn announcement_message(event: &NormalizedEvent) -> String {
     format!(
-        "{} finished task in {}",
+        "{} finished a {} task in {}",
         event.agent.display_name(),
+        event.event_kind,
         event.project_name
     )
 }
