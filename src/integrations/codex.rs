@@ -154,6 +154,7 @@ mod tests {
         let mut state = LocalState {
             codex: CodexState::default(),
             templates: crate::state::TemplateConfig::default(),
+            event_kind_labels: crate::state::EventKindLabelsConfig::default(),
         };
         let managed = vec![
             "/tmp/agitiser-notify".to_string(),
@@ -182,6 +183,7 @@ mod tests {
                 previous_notify: Some(vec!["notify-send".to_string(), "Codex".to_string()]),
             },
             templates: crate::state::TemplateConfig::default(),
+            event_kind_labels: crate::state::EventKindLabelsConfig::default(),
         };
 
         assert!(apply_remove(&mut doc, &mut state));

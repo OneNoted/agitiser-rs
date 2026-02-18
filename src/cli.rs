@@ -58,6 +58,10 @@ pub enum ConfigCommand {
         #[command(subcommand)]
         command: TemplateCommand,
     },
+    EventKind {
+        #[command(subcommand)]
+        command: EventKindCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -75,5 +79,29 @@ pub enum TemplateCommand {
     Reset {
         #[arg(long, value_enum)]
         agent: Option<Agent>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EventKindCommand {
+    Get {
+        #[arg(long, value_enum)]
+        agent: Option<Agent>,
+        #[arg(long)]
+        key: String,
+    },
+    Set {
+        #[arg(long, value_enum)]
+        agent: Option<Agent>,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        value: String,
+    },
+    Reset {
+        #[arg(long, value_enum)]
+        agent: Option<Agent>,
+        #[arg(long)]
+        key: String,
     },
 }

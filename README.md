@@ -5,8 +5,9 @@ Rust CLI that announces agent task completion with `speech-dispatcher` (`spd-say
 ## Features
 
 - Announces only end-of-task events.
-- Speaks `"<Agent> finished a <event_kind> task in <project>"` by default.
+- Speaks `"<Agent> finished a <event_kind> in <project>"` by default.
 - Supports configurable announcement templates (global and per-agent).
+- Supports configurable event-kind labels (for example `task-end -> task`).
 - Auto-setup for:
   - Claude Code (`~/.claude/settings.json` Stop hook)
   - Codex (`~/.codex/config.toml` notify command)
@@ -36,6 +37,12 @@ agitiser-notify config template set --value '{{agent}} finished {{event_kind}} i
 agitiser-notify config template get --agent codex
 agitiser-notify config template set --agent codex --value 'Codex done in {{project}}'
 agitiser-notify config template reset --agent codex
+
+# Manage event-kind labels used by {{event_kind}}
+agitiser-notify config event-kind set --key task-end --value task
+agitiser-notify config event-kind set --agent codex --key task-end --value turn
+agitiser-notify config event-kind get --key task-end
+agitiser-notify config event-kind reset --agent codex --key task-end
 ```
 
 ## Ingest API
@@ -73,7 +80,8 @@ Where payload contains at minimum:
 Templates use Handlebars-style placeholders:
 
 - `{{agent}}` (display name, for example `Codex`)
-- `{{event_kind}}` (normalized terminal event kind, for example `task-end`)
+- `{{event_kind}}` (friendly event-kind label with config and fallback humanization)
+- `{{event_kind_raw}}` (raw normalized event kind, for example `task-end`)
 - `{{project}}` (project name inferred from `cwd`)
 - `{{cwd}}` (full current working directory when present)
 
@@ -82,3 +90,9 @@ Template precedence is:
 1. Per-agent override (`--agent claude|codex|generic`)
 2. Global template
 3. Built-in default message
+
+Event-kind label precedence for `{{event_kind}}` is:
+
+1. Per-agent label from `config event-kind ... --agent ...`
+2. Global label from `config event-kind ...`
+3. Built-in humanized fallback (for example `task-end` -> `task end`)

@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -9,6 +10,8 @@ pub struct LocalState {
     pub codex: CodexState,
     #[serde(default)]
     pub templates: TemplateConfig,
+    #[serde(default)]
+    pub event_kind_labels: EventKindLabelsConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -33,6 +36,24 @@ pub struct AgentTemplateConfig {
     pub codex: Option<String>,
     #[serde(default)]
     pub generic: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EventKindLabelsConfig {
+    #[serde(default)]
+    pub global: BTreeMap<String, String>,
+    #[serde(default)]
+    pub agents: AgentEventKindLabelsConfig,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentEventKindLabelsConfig {
+    #[serde(default)]
+    pub claude: BTreeMap<String, String>,
+    #[serde(default)]
+    pub codex: BTreeMap<String, String>,
+    #[serde(default)]
+    pub generic: BTreeMap<String, String>,
 }
 
 pub fn load(path: &Path) -> Result<LocalState> {

@@ -1,10 +1,11 @@
 use anyhow::{Context, Result};
 use handlebars::Handlebars;
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 use crate::agent::Agent;
-use crate::event::{announcement_message, NormalizedEvent};
-use crate::state::TemplateConfig;
+use crate::event::NormalizedEvent;
+use crate::state::{EventKindLabelsConfig, TemplateConfig};
 
 const TEMPLATE_NAME: &str = "announcement";
 
@@ -12,6 +13,7 @@ const TEMPLATE_NAME: &str = "announcement";
 struct AnnouncementContext<'a> {
     agent: &'a str,
     event_kind: &'a str,
+    event_kind_raw: &'a str,
     project: &'a str,
     cwd: &'a str,
 }
@@ -28,7 +30,49 @@ fn normalize_template(value: Option<&str>) -> Option<&str> {
     value.filter(|candidate| !candidate.trim().is_empty())
 }
 
-fn context_from_event(event: &NormalizedEvent) -> AnnouncementContext<'_> {
+fn normalize_event_kind_key(event_kind: &str) -> String {
+    event_kind.trim().to_ascii_lowercase()
+}
+
+fn humanize_event_kind(event_kind: &str) -> String {
+    let replaced = event_kind.replace('-', " ").replace('_', " ");
+    let collapsed = replaced.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        "event".to_string()
+    } else {
+        collapsed
+    }
+}
+
+fn agent_event_kind_labels(
+    labels: &EventKindLabelsConfig,
+    agent: Agent,
+) -> &BTreeMap<String, String> {
+    match agent {
+        Agent::Claude => &labels.agents.claude,
+        Agent::Codex => &labels.agents.codex,
+        Agent::Generic => &labels.agents.generic,
+    }
+}
+
+fn resolve_event_kind_label(event: &NormalizedEvent, labels: &EventKindLabelsConfig) -> String {
+    let key = normalize_event_kind_key(&event.event_kind);
+    let resolved = agent_event_kind_labels(labels, event.agent)
+        .get(&key)
+        .or_else(|| labels.global.get(&key))
+        .map(|label| label.trim())
+        .filter(|label| !label.is_empty());
+
+    match resolved {
+        Some(label) => label.to_string(),
+        None => humanize_event_kind(&event.event_kind),
+    }
+}
+
+fn context_from_event<'a>(
+    event: &'a NormalizedEvent,
+    event_kind_label: &'a str,
+) -> AnnouncementContext<'a> {
     let cwd = event
         .cwd
         .as_ref()
@@ -37,13 +81,18 @@ fn context_from_event(event: &NormalizedEvent) -> AnnouncementContext<'_> {
 
     AnnouncementContext {
         agent: event.agent.display_name(),
-        event_kind: &event.event_kind,
+        event_kind: event_kind_label,
+        event_kind_raw: &event.event_kind,
         project: &event.project_name,
         cwd,
     }
 }
 
-fn render_template(template: &str, event: &NormalizedEvent) -> Option<String> {
+fn render_template(
+    template: &str,
+    event: &NormalizedEvent,
+    event_kind_label: &str,
+) -> Option<String> {
     let mut renderer = Handlebars::new();
     renderer.set_strict_mode(false);
 
@@ -55,7 +104,7 @@ fn render_template(template: &str, event: &NormalizedEvent) -> Option<String> {
     }
 
     renderer
-        .render(TEMPLATE_NAME, &context_from_event(event))
+        .render(TEMPLATE_NAME, &context_from_event(event, event_kind_label))
         .ok()
         .filter(|rendered| !rendered.trim().is_empty())
 }
@@ -74,14 +123,24 @@ pub fn resolve_template<'a>(templates: &'a TemplateConfig, agent: Agent) -> Opti
         .or_else(|| normalize_template(templates.global.as_deref()))
 }
 
-pub fn render_announcement_message(event: &NormalizedEvent, templates: &TemplateConfig) -> String {
-    let fallback = announcement_message(event);
+pub fn render_announcement_message(
+    event: &NormalizedEvent,
+    templates: &TemplateConfig,
+    event_kind_labels: &EventKindLabelsConfig,
+) -> String {
+    let event_kind_label = resolve_event_kind_label(event, event_kind_labels);
+    let fallback = format!(
+        "{} finished a {} in {}",
+        event.agent.display_name(),
+        event_kind_label,
+        event.project_name
+    );
     let template = resolve_template(templates, event.agent).unwrap_or_default();
     if template.is_empty() {
         return fallback;
     }
 
-    render_template(template, event).unwrap_or(fallback)
+    render_template(template, event, &event_kind_label).unwrap_or(fallback)
 }
 
 #[cfg(test)]
@@ -90,7 +149,9 @@ mod tests {
 
     use crate::agent::Agent;
     use crate::event::normalize;
-    use crate::state::{AgentTemplateConfig, TemplateConfig};
+    use crate::state::{
+        AgentEventKindLabelsConfig, AgentTemplateConfig, EventKindLabelsConfig, TemplateConfig,
+    };
 
     use super::*;
 
@@ -119,18 +180,25 @@ mod tests {
         assert_eq!(resolve_template(&templates, Agent::Claude), Some("global"));
     }
 
+    fn empty_labels() -> EventKindLabelsConfig {
+        EventKindLabelsConfig {
+            global: BTreeMap::new(),
+            agents: AgentEventKindLabelsConfig::default(),
+        }
+    }
+
     #[test]
     fn render_uses_context_fields() {
         let event = codex_event();
         let templates = TemplateConfig {
-            global: Some("{{agent}} {{event_kind}} {{project}} {{cwd}}".to_string()),
+            global: Some("{{agent}} {{event_kind}} {{event_kind_raw}} {{project}} {{cwd}}".to_string()),
             agents: AgentTemplateConfig::default(),
         };
 
-        let message = render_announcement_message(&event, &templates);
+        let message = render_announcement_message(&event, &templates, &empty_labels());
         assert_eq!(
             message,
-            "Codex task-end backend /home/user/Projects/backend"
+            "Codex task end task-end backend /home/user/Projects/backend"
         );
     }
 
@@ -142,8 +210,8 @@ mod tests {
             agents: AgentTemplateConfig::default(),
         };
 
-        let message = render_announcement_message(&event, &templates);
-        assert_eq!(message, "Codex finished a task-end task in backend");
+        let message = render_announcement_message(&event, &templates, &empty_labels());
+        assert_eq!(message, "Codex finished a task end in backend");
     }
 
     #[test]
@@ -154,7 +222,42 @@ mod tests {
             agents: AgentTemplateConfig::default(),
         };
 
-        let message = render_announcement_message(&event, &templates);
-        assert_eq!(message, "Codex finished a task-end task in backend");
+        let message = render_announcement_message(&event, &templates, &empty_labels());
+        assert_eq!(message, "Codex finished a task end in backend");
+    }
+
+    #[test]
+    fn render_uses_configured_global_event_kind_label() {
+        let event = codex_event();
+        let templates = TemplateConfig {
+            global: Some("{{event_kind}}".to_string()),
+            agents: AgentTemplateConfig::default(),
+        };
+        let labels = EventKindLabelsConfig {
+            global: BTreeMap::from([("task-end".to_string(), "task".to_string())]),
+            agents: AgentEventKindLabelsConfig::default(),
+        };
+
+        let message = render_announcement_message(&event, &templates, &labels);
+        assert_eq!(message, "task");
+    }
+
+    #[test]
+    fn render_prefers_agent_specific_event_kind_label() {
+        let event = codex_event();
+        let templates = TemplateConfig {
+            global: Some("{{event_kind}}".to_string()),
+            agents: AgentTemplateConfig::default(),
+        };
+        let labels = EventKindLabelsConfig {
+            global: BTreeMap::from([("task-end".to_string(), "task".to_string())]),
+            agents: AgentEventKindLabelsConfig {
+                codex: BTreeMap::from([("task-end".to_string(), "turn".to_string())]),
+                ..AgentEventKindLabelsConfig::default()
+            },
+        };
+
+        let message = render_announcement_message(&event, &templates, &labels);
+        assert_eq!(message, "turn");
     }
 }

@@ -1,15 +1,16 @@
 mod cli;
 
-use agitiser_notify::agent::SetupAgent;
+use agitiser_notify::agent::{Agent, SetupAgent};
 use agitiser_notify::event::normalize;
 use agitiser_notify::integrations::{claude, codex};
 use agitiser_notify::{paths, speech, state};
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::io::{IsTerminal, Read};
 
-use crate::cli::{Cli, Commands, ConfigCommand, TemplateCommand};
+use crate::cli::{Cli, Commands, ConfigCommand, EventKindCommand, TemplateCommand};
 
 fn main() {
     if let Err(error) = run() {
@@ -38,40 +39,70 @@ fn run() -> Result<()> {
 fn handle_config(command: ConfigCommand) -> Result<()> {
     match command {
         ConfigCommand::Template { command } => handle_template_config(command),
+        ConfigCommand::EventKind { command } => handle_event_kind_config(command),
     }
 }
 
-fn template_scope_label(agent: Option<agitiser_notify::agent::Agent>) -> &'static str {
+fn template_scope_label(agent: Option<Agent>) -> &'static str {
     match agent {
-        Some(agitiser_notify::agent::Agent::Claude) => "claude",
-        Some(agitiser_notify::agent::Agent::Codex) => "codex",
-        Some(agitiser_notify::agent::Agent::Generic) => "generic",
+        Some(Agent::Claude) => "claude",
+        Some(Agent::Codex) => "codex",
+        Some(Agent::Generic) => "generic",
         None => "global",
     }
 }
 
-fn template_slot<'a>(
-    templates: &'a state::TemplateConfig,
-    agent: Option<agitiser_notify::agent::Agent>,
-) -> &'a Option<String> {
+fn template_slot<'a>(templates: &'a state::TemplateConfig, agent: Option<Agent>) -> &'a Option<String> {
     match agent {
-        Some(agitiser_notify::agent::Agent::Claude) => &templates.agents.claude,
-        Some(agitiser_notify::agent::Agent::Codex) => &templates.agents.codex,
-        Some(agitiser_notify::agent::Agent::Generic) => &templates.agents.generic,
+        Some(Agent::Claude) => &templates.agents.claude,
+        Some(Agent::Codex) => &templates.agents.codex,
+        Some(Agent::Generic) => &templates.agents.generic,
         None => &templates.global,
     }
 }
 
 fn template_slot_mut<'a>(
     templates: &'a mut state::TemplateConfig,
-    agent: Option<agitiser_notify::agent::Agent>,
+    agent: Option<Agent>,
 ) -> &'a mut Option<String> {
     match agent {
-        Some(agitiser_notify::agent::Agent::Claude) => &mut templates.agents.claude,
-        Some(agitiser_notify::agent::Agent::Codex) => &mut templates.agents.codex,
-        Some(agitiser_notify::agent::Agent::Generic) => &mut templates.agents.generic,
+        Some(Agent::Claude) => &mut templates.agents.claude,
+        Some(Agent::Codex) => &mut templates.agents.codex,
+        Some(Agent::Generic) => &mut templates.agents.generic,
         None => &mut templates.global,
     }
+}
+
+fn event_kind_labels_slot<'a>(
+    labels: &'a state::EventKindLabelsConfig,
+    agent: Option<Agent>,
+) -> &'a BTreeMap<String, String> {
+    match agent {
+        Some(Agent::Claude) => &labels.agents.claude,
+        Some(Agent::Codex) => &labels.agents.codex,
+        Some(Agent::Generic) => &labels.agents.generic,
+        None => &labels.global,
+    }
+}
+
+fn event_kind_labels_slot_mut<'a>(
+    labels: &'a mut state::EventKindLabelsConfig,
+    agent: Option<Agent>,
+) -> &'a mut BTreeMap<String, String> {
+    match agent {
+        Some(Agent::Claude) => &mut labels.agents.claude,
+        Some(Agent::Codex) => &mut labels.agents.codex,
+        Some(Agent::Generic) => &mut labels.agents.generic,
+        None => &mut labels.global,
+    }
+}
+
+fn normalize_event_kind_key(key: &str) -> Result<String> {
+    let normalized = key.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        bail!("event kind key must not be empty");
+    }
+    Ok(normalized)
 }
 
 fn handle_template_config(command: TemplateCommand) -> Result<()> {
@@ -82,7 +113,15 @@ fn handle_template_config(command: TemplateCommand) -> Result<()> {
     }
 }
 
-fn template_get(agent: Option<agitiser_notify::agent::Agent>) -> Result<()> {
+fn handle_event_kind_config(command: EventKindCommand) -> Result<()> {
+    match command {
+        EventKindCommand::Get { agent, key } => event_kind_get(agent, &key),
+        EventKindCommand::Set { agent, key, value } => event_kind_set(agent, &key, &value),
+        EventKindCommand::Reset { agent, key } => event_kind_reset(agent, &key),
+    }
+}
+
+fn template_get(agent: Option<Agent>) -> Result<()> {
     let state_path = paths::local_state_path()?;
     let local_state = state::load(&state_path)?;
     if let Some(value) = template_slot(&local_state.templates, agent) {
@@ -93,7 +132,7 @@ fn template_get(agent: Option<agitiser_notify::agent::Agent>) -> Result<()> {
     Ok(())
 }
 
-fn template_set(agent: Option<agitiser_notify::agent::Agent>, value: String) -> Result<()> {
+fn template_set(agent: Option<Agent>, value: String) -> Result<()> {
     agitiser_notify::template::validate_template(&value)?;
 
     let state_path = paths::local_state_path()?;
@@ -110,7 +149,7 @@ fn template_set(agent: Option<agitiser_notify::agent::Agent>, value: String) -> 
     Ok(())
 }
 
-fn template_reset(agent: Option<agitiser_notify::agent::Agent>) -> Result<()> {
+fn template_reset(agent: Option<Agent>) -> Result<()> {
     let state_path = paths::local_state_path()?;
     let mut local_state = state::load(&state_path)?;
     let slot = template_slot_mut(&mut local_state.templates, agent);
@@ -121,6 +160,68 @@ fn template_reset(agent: Option<agitiser_notify::agent::Agent>) -> Result<()> {
 
     state::save(&state_path, &local_state)?;
     println!("template for {} reset", template_scope_label(agent));
+    Ok(())
+}
+
+fn event_kind_get(agent: Option<Agent>, key: &str) -> Result<()> {
+    let state_path = paths::local_state_path()?;
+    let local_state = state::load(&state_path)?;
+    let normalized_key = normalize_event_kind_key(key)?;
+
+    if let Some(value) = event_kind_labels_slot(&local_state.event_kind_labels, agent).get(&normalized_key) {
+        println!("{value}");
+    } else {
+        println!("<unset>");
+    }
+    Ok(())
+}
+
+fn event_kind_set(agent: Option<Agent>, key: &str, value: &str) -> Result<()> {
+    let normalized_key = normalize_event_kind_key(key)?;
+    let trimmed_value = value.trim();
+    if trimmed_value.is_empty() {
+        bail!("event kind label value must not be empty");
+    }
+
+    let state_path = paths::local_state_path()?;
+    let mut local_state = state::load(&state_path)?;
+    let slot = event_kind_labels_slot_mut(&mut local_state.event_kind_labels, agent);
+    let changed = match slot.get(&normalized_key) {
+        Some(previous) if previous == trimmed_value => false,
+        _ => {
+            slot.insert(normalized_key, trimmed_value.to_string());
+            true
+        }
+    };
+
+    if !changed {
+        println!(
+            "event-kind label for {} unchanged",
+            template_scope_label(agent)
+        );
+        return Ok(());
+    }
+
+    state::save(&state_path, &local_state)?;
+    println!("event-kind label for {} updated", template_scope_label(agent));
+    Ok(())
+}
+
+fn event_kind_reset(agent: Option<Agent>, key: &str) -> Result<()> {
+    let normalized_key = normalize_event_kind_key(key)?;
+    let state_path = paths::local_state_path()?;
+    let mut local_state = state::load(&state_path)?;
+    let slot = event_kind_labels_slot_mut(&mut local_state.event_kind_labels, agent);
+    if slot.remove(&normalized_key).is_none() {
+        println!(
+            "event-kind label for {} already unset",
+            template_scope_label(agent)
+        );
+        return Ok(());
+    }
+
+    state::save(&state_path, &local_state)?;
+    println!("event-kind label for {} reset", template_scope_label(agent));
     Ok(())
 }
 
@@ -213,7 +314,7 @@ fn remove_agents(agents: Vec<SetupAgent>) -> Result<()> {
 }
 
 fn ingest_event(
-    agent: agitiser_notify::agent::Agent,
+    agent: Agent,
     payload: Option<String>,
     trailing_payload: Option<String>,
     source: Option<String>,
@@ -271,7 +372,7 @@ fn ingest_event(
         }
     };
 
-    speech::speak(&event, &local_state.templates)?;
+    speech::speak(&event, &local_state)?;
     if verbose {
         let cwd = event
             .cwd

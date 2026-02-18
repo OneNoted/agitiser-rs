@@ -348,3 +348,112 @@ fn config_template_set_rejects_invalid_syntax() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("invalid template syntax"));
 }
+
+#[test]
+fn config_event_kind_global_round_trip() {
+    let bin = env!("CARGO_BIN_EXE_agitiser-notify");
+    let home = temp_home();
+
+    let set_output = std::process::Command::new(bin)
+        .args([
+            "config",
+            "event-kind",
+            "set",
+            "--key",
+            "task-end",
+            "--value",
+            "task",
+        ])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run event-kind set");
+    assert!(set_output.status.success());
+
+    let get_output = std::process::Command::new(bin)
+        .args(["config", "event-kind", "get", "--key", "TASK-END"])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run event-kind get");
+    assert!(get_output.status.success());
+    assert_eq!(String::from_utf8_lossy(&get_output.stdout).trim(), "task");
+
+    let reset_output = std::process::Command::new(bin)
+        .args(["config", "event-kind", "reset", "--key", "task-end"])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run event-kind reset");
+    assert!(reset_output.status.success());
+
+    let get_after_reset = std::process::Command::new(bin)
+        .args(["config", "event-kind", "get", "--key", "task-end"])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run event-kind get after reset");
+    assert!(get_after_reset.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&get_after_reset.stdout).trim(),
+        "<unset>"
+    );
+}
+
+#[test]
+fn config_event_kind_agent_override_round_trip() {
+    let bin = env!("CARGO_BIN_EXE_agitiser-notify");
+    let home = temp_home();
+
+    let set_global = std::process::Command::new(bin)
+        .args([
+            "config",
+            "event-kind",
+            "set",
+            "--key",
+            "task-end",
+            "--value",
+            "task",
+        ])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run global event-kind set");
+    assert!(set_global.status.success());
+
+    let set_agent = std::process::Command::new(bin)
+        .args([
+            "config",
+            "event-kind",
+            "set",
+            "--agent",
+            "codex",
+            "--key",
+            "task-end",
+            "--value",
+            "turn",
+        ])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run agent event-kind set");
+    assert!(set_agent.status.success());
+
+    let get_agent = std::process::Command::new(bin)
+        .args([
+            "config",
+            "event-kind",
+            "get",
+            "--agent",
+            "codex",
+            "--key",
+            "task-end",
+        ])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run agent event-kind get");
+    assert!(get_agent.status.success());
+    assert_eq!(String::from_utf8_lossy(&get_agent.stdout).trim(), "turn");
+
+    let get_global = std::process::Command::new(bin)
+        .args(["config", "event-kind", "get", "--key", "task-end"])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run global event-kind get");
+    assert!(get_global.status.success());
+    assert_eq!(String::from_utf8_lossy(&get_global.stdout).trim(), "task");
+}
