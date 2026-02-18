@@ -209,6 +209,46 @@ fn ingest_empty_payload_skips() {
     assert!(stderr.contains("empty payload"));
 }
 
+#[test]
+fn completions_with_shell_arg_outputs_script() {
+    let bin = env!("CARGO_BIN_EXE_agitiser-notify");
+    let output = std::process::Command::new(bin)
+        .args(["completions", "--shell", "fish"])
+        .output()
+        .expect("failed to run completions command");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("agitiser-notify"));
+}
+
+#[test]
+fn completions_auto_detects_shell_from_env() {
+    let bin = env!("CARGO_BIN_EXE_agitiser-notify");
+    let output = std::process::Command::new(bin)
+        .arg("completions")
+        .env("SHELL", "/usr/bin/fish")
+        .output()
+        .expect("failed to run completions command");
+
+    assert!(output.status.success());
+    assert!(!output.stdout.is_empty());
+}
+
+#[test]
+fn completions_errors_when_shell_cannot_be_detected() {
+    let bin = env!("CARGO_BIN_EXE_agitiser-notify");
+    let output = std::process::Command::new(bin)
+        .arg("completions")
+        .env_remove("SHELL")
+        .output()
+        .expect("failed to run completions command");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("could not detect shell from $SHELL"));
+}
+
 // --- Codex state round-trip with previous_notify ---
 
 #[test]

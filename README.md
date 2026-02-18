@@ -31,6 +31,13 @@ agitiser-notify remove
 # Health checks
 agitiser-notify doctor
 
+# Generate shell completions (stdout)
+agitiser-notify completions --shell fish > ~/.config/fish/completions/agitiser-notify.fish
+agitiser-notify completions --shell zsh > ~/.zfunc/_agitiser-notify
+agitiser-notify completions --shell bash > /etc/bash_completion.d/agitiser-notify
+# Auto-detect shell from $SHELL
+agitiser-notify completions > /tmp/agitiser-notify.completion
+
 # Manage spoken message templates
 agitiser-notify config template get
 agitiser-notify config template set --value '{{agent}} finished a {{event_kind}} in the {{project}} project'
