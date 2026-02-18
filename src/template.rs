@@ -8,6 +8,8 @@ use crate::event::NormalizedEvent;
 use crate::state::{EventKindLabelsConfig, TemplateConfig};
 
 const TEMPLATE_NAME: &str = "announcement";
+const BUILTIN_DEFAULT_TEMPLATE: &str =
+    "{{agent}} finished a {{event_kind}} in the {{project}} project";
 
 #[derive(Debug, Serialize)]
 struct AnnouncementContext<'a> {
@@ -59,7 +61,15 @@ fn resolve_event_kind_label(event: &NormalizedEvent, labels: &EventKindLabelsCon
     let key = normalize_event_kind_key(&event.event_kind);
     let resolved = agent_event_kind_labels(labels, event.agent)
         .get(&key)
-        .or_else(|| labels.global.get(&key))
+        .map(String::as_str)
+        .or_else(|| labels.global.get(&key).map(String::as_str))
+        .or_else(|| {
+            if key == "task-end" {
+                Some("task")
+            } else {
+                None
+            }
+        })
         .map(|label| label.trim())
         .filter(|label| !label.is_empty());
 
@@ -129,18 +139,22 @@ pub fn render_announcement_message(
     event_kind_labels: &EventKindLabelsConfig,
 ) -> String {
     let event_kind_label = resolve_event_kind_label(event, event_kind_labels);
-    let fallback = format!(
-        "{} finished a {} in {}",
-        event.agent.display_name(),
-        event_kind_label,
-        event.project_name
-    );
-    let template = resolve_template(templates, event.agent).unwrap_or_default();
-    if template.is_empty() {
-        return fallback;
-    }
+    let default_message = render_template(BUILTIN_DEFAULT_TEMPLATE, event, &event_kind_label)
+        .unwrap_or_else(|| {
+            format!(
+                "{} finished a {} in the {} project",
+                event.agent.display_name(),
+                event_kind_label,
+                event.project_name
+            )
+        });
 
-    render_template(template, event, &event_kind_label).unwrap_or(fallback)
+    match resolve_template(templates, event.agent) {
+        Some(template) => {
+            render_template(template, event, &event_kind_label).unwrap_or(default_message)
+        }
+        None => default_message,
+    }
 }
 
 #[cfg(test)]
@@ -198,7 +212,7 @@ mod tests {
         let message = render_announcement_message(&event, &templates, &empty_labels());
         assert_eq!(
             message,
-            "Codex task end task-end backend /home/user/Projects/backend"
+            "Codex task task-end backend /home/user/Projects/backend"
         );
     }
 
@@ -211,19 +225,16 @@ mod tests {
         };
 
         let message = render_announcement_message(&event, &templates, &empty_labels());
-        assert_eq!(message, "Codex finished a task end in backend");
+        assert_eq!(message, "Codex finished a task in the backend project");
     }
 
     #[test]
     fn render_falls_back_when_template_outputs_only_whitespace() {
         let event = codex_event();
-        let templates = TemplateConfig {
-            global: Some("   ".to_string()),
-            agents: AgentTemplateConfig::default(),
-        };
+        let templates = TemplateConfig::default();
 
         let message = render_announcement_message(&event, &templates, &empty_labels());
-        assert_eq!(message, "Codex finished a task end in backend");
+        assert_eq!(message, "Codex finished a task in the backend project");
     }
 
     #[test]

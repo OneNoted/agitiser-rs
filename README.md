@@ -5,7 +5,7 @@ Rust CLI that announces agent task completion with `speech-dispatcher` (`spd-say
 ## Features
 
 - Announces only end-of-task events.
-- Speaks `"<Agent> finished a <event_kind> in <project>"` by default.
+- Speaks `"<Agent> finished a <event_kind> in the <project> project"` by default.
 - Supports configurable announcement templates (global and per-agent).
 - Supports configurable event-kind labels (for example `task-end -> task`).
 - Auto-setup for:
@@ -33,7 +33,7 @@ agitiser-notify doctor
 
 # Manage spoken message templates
 agitiser-notify config template get
-agitiser-notify config template set --value '{{agent}} finished {{event_kind}} in {{project}}'
+agitiser-notify config template set --value '{{agent}} finished a {{event_kind}} in the {{project}} project'
 agitiser-notify config template get --agent codex
 agitiser-notify config template set --agent codex --value 'Codex done in {{project}}'
 agitiser-notify config template reset --agent codex
@@ -95,4 +95,5 @@ Event-kind label precedence for `{{event_kind}}` is:
 
 1. Per-agent label from `config event-kind ... --agent ...`
 2. Global label from `config event-kind ...`
-3. Built-in humanized fallback (for example `task-end` -> `task end`)
+3. Built-in label map (`task-end` -> `task`)
+4. Built-in humanized fallback (for example `task-completed` -> `task completed`)
