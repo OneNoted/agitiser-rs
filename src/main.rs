@@ -5,12 +5,14 @@ use agitiser_notify::event::normalize;
 use agitiser_notify::integrations::{claude, codex};
 use agitiser_notify::{paths, speech, state};
 use anyhow::{bail, Context, Result};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::{generate, Shell};
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::io::{IsTerminal, Read};
+use std::io::{self, IsTerminal, Read};
+use std::path::Path;
 
-use crate::cli::{Cli, Commands, ConfigCommand, EventKindCommand, TemplateCommand};
+use crate::cli::{Cli, Commands, ConfigCommand, EventKindCommand, ShellArg, TemplateCommand};
 
 fn main() {
     if let Err(error) = run() {
@@ -22,6 +24,14 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Commands::Completions { shell } => {
+            let resolved_shell = shell
+                .or_else(detect_shell_from_env)
+                .context(
+                    "could not detect shell from $SHELL; pass --shell <bash|zsh|fish|elvish|powershell>",
+                )?;
+            print_completions(resolved_shell)
+        }
         Commands::Setup { agents } => setup_agents(agents),
         Commands::Remove { agents } => remove_agents(agents),
         Commands::Ingest {
@@ -34,6 +44,41 @@ fn run() -> Result<()> {
         Commands::Doctor => doctor(),
         Commands::Config { command } => handle_config(command),
     }
+}
+
+fn detect_shell_from_env() -> Option<ShellArg> {
+    let shell = std::env::var("SHELL").ok()?;
+    let shell_name = Path::new(shell.trim()).file_name()?.to_str()?.to_ascii_lowercase();
+
+    match shell_name.as_str() {
+        "bash" => Some(ShellArg::Bash),
+        "zsh" => Some(ShellArg::Zsh),
+        "fish" => Some(ShellArg::Fish),
+        "elvish" => Some(ShellArg::Elvish),
+        "pwsh" | "powershell" => Some(ShellArg::Powershell),
+        _ => None,
+    }
+}
+
+fn completion_shell(shell: ShellArg) -> Shell {
+    match shell {
+        ShellArg::Bash => Shell::Bash,
+        ShellArg::Zsh => Shell::Zsh,
+        ShellArg::Fish => Shell::Fish,
+        ShellArg::Elvish => Shell::Elvish,
+        ShellArg::Powershell => Shell::PowerShell,
+    }
+}
+
+fn print_completions(shell: ShellArg) -> Result<()> {
+    let mut command = Cli::command();
+    generate(
+        completion_shell(shell),
+        &mut command,
+        "agitiser-notify",
+        &mut io::stdout(),
+    );
+    Ok(())
 }
 
 fn handle_config(command: ConfigCommand) -> Result<()> {

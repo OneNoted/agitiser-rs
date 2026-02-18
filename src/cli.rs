@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use agitiser_notify::agent::{Agent, SetupAgent};
 
@@ -15,6 +15,10 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    Completions {
+        #[arg(long, value_enum)]
+        shell: Option<ShellArg>,
+    },
     Setup {
         #[arg(
             long,
@@ -50,6 +54,16 @@ pub enum Commands {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum ShellArg {
+    Bash,
+    Zsh,
+    Fish,
+    Elvish,
+    Powershell,
 }
 
 #[derive(Debug, Subcommand)]
