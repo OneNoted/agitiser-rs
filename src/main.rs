@@ -48,7 +48,10 @@ fn run() -> Result<()> {
 
 fn detect_shell_from_env() -> Option<ShellArg> {
     let shell = std::env::var("SHELL").ok()?;
-    let shell_name = Path::new(shell.trim()).file_name()?.to_str()?.to_ascii_lowercase();
+    let shell_name = Path::new(shell.trim())
+        .file_name()?
+        .to_str()?
+        .to_ascii_lowercase();
 
     match shell_name.as_str() {
         "bash" => Some(ShellArg::Bash),
@@ -97,7 +100,7 @@ fn template_scope_label(agent: Option<Agent>) -> &'static str {
     }
 }
 
-fn template_slot<'a>(templates: &'a state::TemplateConfig, agent: Option<Agent>) -> &'a Option<String> {
+fn template_slot(templates: &state::TemplateConfig, agent: Option<Agent>) -> &Option<String> {
     match agent {
         Some(Agent::Claude) => &templates.agents.claude,
         Some(Agent::Codex) => &templates.agents.codex,
@@ -106,10 +109,10 @@ fn template_slot<'a>(templates: &'a state::TemplateConfig, agent: Option<Agent>)
     }
 }
 
-fn template_slot_mut<'a>(
-    templates: &'a mut state::TemplateConfig,
+fn template_slot_mut(
+    templates: &mut state::TemplateConfig,
     agent: Option<Agent>,
-) -> &'a mut Option<String> {
+) -> &mut Option<String> {
     match agent {
         Some(Agent::Claude) => &mut templates.agents.claude,
         Some(Agent::Codex) => &mut templates.agents.codex,
@@ -118,10 +121,10 @@ fn template_slot_mut<'a>(
     }
 }
 
-fn event_kind_labels_slot<'a>(
-    labels: &'a state::EventKindLabelsConfig,
+fn event_kind_labels_slot(
+    labels: &state::EventKindLabelsConfig,
     agent: Option<Agent>,
-) -> &'a BTreeMap<String, String> {
+) -> &BTreeMap<String, String> {
     match agent {
         Some(Agent::Claude) => &labels.agents.claude,
         Some(Agent::Codex) => &labels.agents.codex,
@@ -130,10 +133,10 @@ fn event_kind_labels_slot<'a>(
     }
 }
 
-fn event_kind_labels_slot_mut<'a>(
-    labels: &'a mut state::EventKindLabelsConfig,
+fn event_kind_labels_slot_mut(
+    labels: &mut state::EventKindLabelsConfig,
     agent: Option<Agent>,
-) -> &'a mut BTreeMap<String, String> {
+) -> &mut BTreeMap<String, String> {
     match agent {
         Some(Agent::Claude) => &mut labels.agents.claude,
         Some(Agent::Codex) => &mut labels.agents.codex,
@@ -213,7 +216,9 @@ fn event_kind_get(agent: Option<Agent>, key: &str) -> Result<()> {
     let local_state = state::load(&state_path)?;
     let normalized_key = normalize_event_kind_key(key)?;
 
-    if let Some(value) = event_kind_labels_slot(&local_state.event_kind_labels, agent).get(&normalized_key) {
+    if let Some(value) =
+        event_kind_labels_slot(&local_state.event_kind_labels, agent).get(&normalized_key)
+    {
         println!("{value}");
     } else {
         println!("<unset>");
@@ -248,7 +253,10 @@ fn event_kind_set(agent: Option<Agent>, key: &str, value: &str) -> Result<()> {
     }
 
     state::save(&state_path, &local_state)?;
-    println!("event-kind label for {} updated", template_scope_label(agent));
+    println!(
+        "event-kind label for {} updated",
+        template_scope_label(agent)
+    );
     Ok(())
 }
 

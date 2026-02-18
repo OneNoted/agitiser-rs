@@ -1,6 +1,8 @@
 # agitiser-notify
 
-Rust CLI that announces agent task completion with `speech-dispatcher` (`spd-say`), including the project name.
+Rust CLI that announces agent task completion with `speech-dispatcher` (`spd-say`), including configurable message. 
+
+*this may be the most horrible thing I've ever made truly ai slop ;-; but hey it works!!*
 
 ## Features
 
@@ -12,6 +14,12 @@ Rust CLI that announces agent task completion with `speech-dispatcher` (`spd-say
   - Claude Code (`~/.claude/settings.json` Stop hook)
   - Codex (`~/.codex/config.toml` notify command)
 - Manual integration path for OpenCode.
+
+## Platform Support
+
+- Linux is the primary supported platform for this release.
+- `speech-dispatcher` (`spd-say`) must be available in `PATH`.
+- macOS and Windows are not currently first-class supported notifier backends.
 
 ## Build
 

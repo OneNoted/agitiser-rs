@@ -20,7 +20,7 @@ struct AnnouncementContext<'a> {
     cwd: &'a str,
 }
 
-fn agent_template<'a>(templates: &'a TemplateConfig, agent: Agent) -> Option<&'a str> {
+fn agent_template(templates: &TemplateConfig, agent: Agent) -> Option<&str> {
     match agent {
         Agent::Claude => templates.agents.claude.as_deref(),
         Agent::Codex => templates.agents.codex.as_deref(),
@@ -37,7 +37,7 @@ fn normalize_event_kind_key(event_kind: &str) -> String {
 }
 
 fn humanize_event_kind(event_kind: &str) -> String {
-    let replaced = event_kind.replace('-', " ").replace('_', " ");
+    let replaced = event_kind.replace(['-', '_'], " ");
     let collapsed = replaced.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.is_empty() {
         "event".to_string()
@@ -128,7 +128,7 @@ pub fn validate_template(template: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn resolve_template<'a>(templates: &'a TemplateConfig, agent: Agent) -> Option<&'a str> {
+pub fn resolve_template(templates: &TemplateConfig, agent: Agent) -> Option<&str> {
     normalize_template(agent_template(templates, agent))
         .or_else(|| normalize_template(templates.global.as_deref()))
 }
@@ -205,7 +205,9 @@ mod tests {
     fn render_uses_context_fields() {
         let event = codex_event();
         let templates = TemplateConfig {
-            global: Some("{{agent}} {{event_kind}} {{event_kind_raw}} {{project}} {{cwd}}".to_string()),
+            global: Some(
+                "{{agent}} {{event_kind}} {{event_kind_raw}} {{project}} {{cwd}}".to_string(),
+            ),
             agents: AgentTemplateConfig::default(),
         };
 

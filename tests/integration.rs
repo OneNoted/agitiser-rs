@@ -3,7 +3,7 @@ use agitiser_notify::event::{normalize, project_name_from_cwd};
 use agitiser_notify::integrations::{claude, codex};
 use agitiser_notify::state::LocalState;
 use serde_json::json;
-use std::io::Write;
+use std::{fs, io::Write};
 use tempfile::{NamedTempFile, TempDir};
 
 // --- Claude setup/remove round-trip ---
@@ -68,6 +68,23 @@ fn claude_remove_cleans_up_empty_stop_preserves_other_hooks() {
     let hooks = settings.get("hooks").expect("hooks should remain");
     assert!(hooks.get("Stop").is_none());
     assert!(hooks.get("Other").is_some());
+}
+
+#[test]
+fn claude_remove_persists_empty_stop_cleanup_to_disk() {
+    let mut file = NamedTempFile::new().expect("temp file");
+    write!(file, r#"{{"hooks":{{"Stop":[]}}}}"#).expect("write settings");
+    let path = file.path().to_path_buf();
+
+    let changed = claude::remove(&path).expect("remove");
+    assert!(!changed, "no managed hook should be reported as removed");
+
+    let raw = fs::read_to_string(&path).expect("read updated settings");
+    let parsed: serde_json::Value = serde_json::from_str(&raw).expect("parse updated settings");
+    assert!(
+        parsed.get("hooks").is_none(),
+        "empty Stop cleanup should be persisted"
+    );
 }
 
 // --- Event normalization ---
@@ -270,7 +287,7 @@ fn codex_preserves_and_restores_previous_notify() {
     // Remove should restore the previous notify
     assert!(codex::remove(&path, &mut state).expect("remove"));
     assert!(state.codex.previous_notify.is_none());
-    assert!(codex::is_configured(&path).expect("should not be configured") == false);
+    assert!(!codex::is_configured(&path).expect("should not be configured"));
 }
 
 fn temp_home() -> TempDir {
@@ -311,7 +328,10 @@ fn config_template_global_round_trip() {
         .output()
         .expect("failed to run template get after reset");
     assert!(get_after_reset.status.success());
-    assert_eq!(String::from_utf8_lossy(&get_after_reset.stdout).trim(), "<unset>");
+    assert_eq!(
+        String::from_utf8_lossy(&get_after_reset.stdout).trim(),
+        "<unset>"
+    );
 }
 
 #[test]
@@ -322,13 +342,7 @@ fn config_template_agent_override_round_trip() {
 
     let set_output = std::process::Command::new(bin)
         .args([
-            "config",
-            "template",
-            "set",
-            "--agent",
-            "codex",
-            "--value",
-            template,
+            "config", "template", "set", "--agent", "codex", "--value", template,
         ])
         .env("HOME", home.path())
         .output()
@@ -352,7 +366,10 @@ fn config_template_agent_override_round_trip() {
         .output()
         .expect("failed to run global template get");
     assert!(get_global_output.status.success());
-    assert_eq!(String::from_utf8_lossy(&get_global_output.stdout).trim(), "<unset>");
+    assert_eq!(
+        String::from_utf8_lossy(&get_global_output.stdout).trim(),
+        "<unset>"
+    );
 
     let reset_agent_output = std::process::Command::new(bin)
         .args(["config", "template", "reset", "--agent", "codex"])

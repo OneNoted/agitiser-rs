@@ -29,8 +29,9 @@ pub fn remove(settings_path: &Path) -> Result<bool> {
     }
 
     let mut settings = load_settings(settings_path)?;
+    let previous_settings = settings.clone();
     let changed = apply_remove(&mut settings);
-    if changed {
+    if settings != previous_settings {
         write_settings(settings_path, &settings)?;
     }
     Ok(changed)
