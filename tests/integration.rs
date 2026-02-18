@@ -46,11 +46,13 @@ fn codex_setup_remove_round_trip() {
 fn claude_remove_cleans_up_empty_stop_array() {
     let mut settings = json!({
         "hooks": {
-            "Stop": []
+            "Stop": [],
+            "SubagentStop": [],
+            "PermissionRequest": []
         }
     });
 
-    assert!(!claude::apply_remove(&mut settings));
+    assert!(claude::apply_remove(&mut settings));
     assert!(settings.get("hooks").is_none());
 }
 
@@ -63,7 +65,7 @@ fn claude_remove_cleans_up_empty_stop_preserves_other_hooks() {
         }
     });
 
-    assert!(!claude::apply_remove(&mut settings));
+    assert!(claude::apply_remove(&mut settings));
     // Stop should be removed, but Other should remain
     let hooks = settings.get("hooks").expect("hooks should remain");
     assert!(hooks.get("Stop").is_none());
@@ -84,6 +86,46 @@ fn normalize_claude_stop_event() {
     assert_eq!(event.agent, Agent::Claude);
     assert_eq!(event.event_kind, "task-end");
     assert_eq!(event.project_name, "myapp");
+}
+
+#[test]
+fn normalize_claude_subagent_stop_event() {
+    let payload = json!({
+        "session_id": "test-456",
+        "hook_event_name": "SubagentStop",
+        "cwd": "/home/user/Projects/myapp"
+    });
+
+    let event = normalize(Agent::Claude, payload).expect("should normalize");
+    assert_eq!(event.agent, Agent::Claude);
+    assert_eq!(event.event_kind, "plan-end");
+    assert_eq!(event.project_name, "myapp");
+}
+
+#[test]
+fn normalize_claude_permission_request_exit_plan_mode() {
+    let payload = json!({
+        "session_id": "test-457",
+        "hook_event_name": "PermissionRequest",
+        "tool_name": "ExitPlanMode",
+        "cwd": "/home/user/Projects/myapp"
+    });
+
+    let event = normalize(Agent::Claude, payload).expect("should normalize");
+    assert_eq!(event.agent, Agent::Claude);
+    assert_eq!(event.event_kind, "plan-end");
+    assert_eq!(event.project_name, "myapp");
+}
+
+#[test]
+fn normalize_claude_ignores_other_permission_request() {
+    let payload = json!({
+        "hook_event_name": "PermissionRequest",
+        "tool_name": "Bash",
+        "cwd": "/tmp"
+    });
+
+    assert!(normalize(Agent::Claude, payload).is_none());
 }
 
 #[test]
@@ -110,9 +152,32 @@ fn normalize_codex_turn_complete() {
 }
 
 #[test]
+fn normalize_codex_plan_complete() {
+    let payload = json!({
+        "type": "agent-plan-complete",
+        "cwd": "/home/user/Projects/backend"
+    });
+
+    let event = normalize(Agent::Codex, payload).expect("should normalize");
+    assert_eq!(event.agent, Agent::Codex);
+    assert_eq!(event.event_kind, "plan-end");
+    assert_eq!(event.project_name, "backend");
+}
+
+#[test]
 fn normalize_codex_ignores_non_terminal() {
     let payload = json!({
         "type": "agent-turn-start",
+        "cwd": "/tmp"
+    });
+
+    assert!(normalize(Agent::Codex, payload).is_none());
+}
+
+#[test]
+fn normalize_codex_ignores_unknown_complete_type() {
+    let payload = json!({
+        "type": "something-complete",
         "cwd": "/tmp"
     });
 
@@ -270,7 +335,7 @@ fn codex_preserves_and_restores_previous_notify() {
     // Remove should restore the previous notify
     assert!(codex::remove(&path, &mut state).expect("remove"));
     assert!(state.codex.previous_notify.is_none());
-    assert!(codex::is_configured(&path).expect("should not be configured") == false);
+    assert!(!codex::is_configured(&path).expect("should not be configured"));
 }
 
 fn temp_home() -> TempDir {
@@ -311,7 +376,10 @@ fn config_template_global_round_trip() {
         .output()
         .expect("failed to run template get after reset");
     assert!(get_after_reset.status.success());
-    assert_eq!(String::from_utf8_lossy(&get_after_reset.stdout).trim(), "<unset>");
+    assert_eq!(
+        String::from_utf8_lossy(&get_after_reset.stdout).trim(),
+        "<unset>"
+    );
 }
 
 #[test]
@@ -322,13 +390,7 @@ fn config_template_agent_override_round_trip() {
 
     let set_output = std::process::Command::new(bin)
         .args([
-            "config",
-            "template",
-            "set",
-            "--agent",
-            "codex",
-            "--value",
-            template,
+            "config", "template", "set", "--agent", "codex", "--value", template,
         ])
         .env("HOME", home.path())
         .output()
@@ -352,7 +414,10 @@ fn config_template_agent_override_round_trip() {
         .output()
         .expect("failed to run global template get");
     assert!(get_global_output.status.success());
-    assert_eq!(String::from_utf8_lossy(&get_global_output.stdout).trim(), "<unset>");
+    assert_eq!(
+        String::from_utf8_lossy(&get_global_output.stdout).trim(),
+        "<unset>"
+    );
 
     let reset_agent_output = std::process::Command::new(bin)
         .args(["config", "template", "reset", "--agent", "codex"])
@@ -496,4 +561,65 @@ fn config_event_kind_agent_override_round_trip() {
         .expect("failed to run global event-kind get");
     assert!(get_global.status.success());
     assert_eq!(String::from_utf8_lossy(&get_global.stdout).trim(), "task");
+}
+
+#[test]
+fn config_subagent_round_trip() {
+    let bin = env!("CARGO_BIN_EXE_agitiser-notify");
+    let home = temp_home();
+
+    let get_default = std::process::Command::new(bin)
+        .args(["config", "subagent", "get"])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run subagent get");
+    assert!(get_default.status.success());
+    assert_eq!(String::from_utf8_lossy(&get_default.stdout).trim(), "true");
+
+    let set_false = std::process::Command::new(bin)
+        .args(["config", "subagent", "set", "--enabled", "false"])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run subagent set false");
+    assert!(set_false.status.success());
+
+    let get_after_set = std::process::Command::new(bin)
+        .args(["config", "subagent", "get"])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run subagent get after set");
+    assert!(get_after_set.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&get_after_set.stdout).trim(),
+        "false"
+    );
+}
+
+#[test]
+fn ingest_claude_subagent_skips_when_disabled() {
+    let bin = env!("CARGO_BIN_EXE_agitiser-notify");
+    let home = temp_home();
+
+    let set_false = std::process::Command::new(bin)
+        .args(["config", "subagent", "set", "--enabled", "false"])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run subagent set false");
+    assert!(set_false.status.success());
+
+    let output = std::process::Command::new(bin)
+        .args([
+            "ingest",
+            "--agent",
+            "claude",
+            "--verbose",
+            "--payload",
+            r#"{"hook_event_name":"SubagentStop","cwd":"/tmp"}"#,
+        ])
+        .env("HOME", home.path())
+        .output()
+        .expect("failed to run ingest");
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("subagent notification disabled"));
 }

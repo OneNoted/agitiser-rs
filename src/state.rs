@@ -12,6 +12,8 @@ pub struct LocalState {
     pub templates: TemplateConfig,
     #[serde(default)]
     pub event_kind_labels: EventKindLabelsConfig,
+    #[serde(default)]
+    pub notifications: NotificationConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -54,6 +56,24 @@ pub struct AgentEventKindLabelsConfig {
     pub codex: BTreeMap<String, String>,
     #[serde(default)]
     pub generic: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NotificationConfig {
+    #[serde(default = "default_true")]
+    pub claude_subagent: bool,
+}
+
+impl Default for NotificationConfig {
+    fn default() -> Self {
+        Self {
+            claude_subagent: true,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 pub fn load(path: &Path) -> Result<LocalState> {

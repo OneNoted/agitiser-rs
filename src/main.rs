@@ -12,7 +12,9 @@ use std::collections::BTreeMap;
 use std::io::{self, IsTerminal, Read};
 use std::path::Path;
 
-use crate::cli::{Cli, Commands, ConfigCommand, EventKindCommand, ShellArg, TemplateCommand};
+use crate::cli::{
+    Cli, Commands, ConfigCommand, EventKindCommand, ShellArg, SubagentCommand, TemplateCommand,
+};
 
 fn main() {
     if let Err(error) = run() {
@@ -48,7 +50,10 @@ fn run() -> Result<()> {
 
 fn detect_shell_from_env() -> Option<ShellArg> {
     let shell = std::env::var("SHELL").ok()?;
-    let shell_name = Path::new(shell.trim()).file_name()?.to_str()?.to_ascii_lowercase();
+    let shell_name = Path::new(shell.trim())
+        .file_name()?
+        .to_str()?
+        .to_ascii_lowercase();
 
     match shell_name.as_str() {
         "bash" => Some(ShellArg::Bash),
@@ -85,6 +90,7 @@ fn handle_config(command: ConfigCommand) -> Result<()> {
     match command {
         ConfigCommand::Template { command } => handle_template_config(command),
         ConfigCommand::EventKind { command } => handle_event_kind_config(command),
+        ConfigCommand::Subagent { command } => handle_subagent_config(command),
     }
 }
 
@@ -97,7 +103,7 @@ fn template_scope_label(agent: Option<Agent>) -> &'static str {
     }
 }
 
-fn template_slot<'a>(templates: &'a state::TemplateConfig, agent: Option<Agent>) -> &'a Option<String> {
+fn template_slot(templates: &state::TemplateConfig, agent: Option<Agent>) -> &Option<String> {
     match agent {
         Some(Agent::Claude) => &templates.agents.claude,
         Some(Agent::Codex) => &templates.agents.codex,
@@ -106,10 +112,10 @@ fn template_slot<'a>(templates: &'a state::TemplateConfig, agent: Option<Agent>)
     }
 }
 
-fn template_slot_mut<'a>(
-    templates: &'a mut state::TemplateConfig,
+fn template_slot_mut(
+    templates: &mut state::TemplateConfig,
     agent: Option<Agent>,
-) -> &'a mut Option<String> {
+) -> &mut Option<String> {
     match agent {
         Some(Agent::Claude) => &mut templates.agents.claude,
         Some(Agent::Codex) => &mut templates.agents.codex,
@@ -118,10 +124,10 @@ fn template_slot_mut<'a>(
     }
 }
 
-fn event_kind_labels_slot<'a>(
-    labels: &'a state::EventKindLabelsConfig,
+fn event_kind_labels_slot(
+    labels: &state::EventKindLabelsConfig,
     agent: Option<Agent>,
-) -> &'a BTreeMap<String, String> {
+) -> &BTreeMap<String, String> {
     match agent {
         Some(Agent::Claude) => &labels.agents.claude,
         Some(Agent::Codex) => &labels.agents.codex,
@@ -130,10 +136,10 @@ fn event_kind_labels_slot<'a>(
     }
 }
 
-fn event_kind_labels_slot_mut<'a>(
-    labels: &'a mut state::EventKindLabelsConfig,
+fn event_kind_labels_slot_mut(
+    labels: &mut state::EventKindLabelsConfig,
     agent: Option<Agent>,
-) -> &'a mut BTreeMap<String, String> {
+) -> &mut BTreeMap<String, String> {
     match agent {
         Some(Agent::Claude) => &mut labels.agents.claude,
         Some(Agent::Codex) => &mut labels.agents.codex,
@@ -163,6 +169,13 @@ fn handle_event_kind_config(command: EventKindCommand) -> Result<()> {
         EventKindCommand::Get { agent, key } => event_kind_get(agent, &key),
         EventKindCommand::Set { agent, key, value } => event_kind_set(agent, &key, &value),
         EventKindCommand::Reset { agent, key } => event_kind_reset(agent, &key),
+    }
+}
+
+fn handle_subagent_config(command: SubagentCommand) -> Result<()> {
+    match command {
+        SubagentCommand::Get => subagent_get(),
+        SubagentCommand::Set { enabled } => subagent_set(enabled),
     }
 }
 
@@ -213,7 +226,9 @@ fn event_kind_get(agent: Option<Agent>, key: &str) -> Result<()> {
     let local_state = state::load(&state_path)?;
     let normalized_key = normalize_event_kind_key(key)?;
 
-    if let Some(value) = event_kind_labels_slot(&local_state.event_kind_labels, agent).get(&normalized_key) {
+    if let Some(value) =
+        event_kind_labels_slot(&local_state.event_kind_labels, agent).get(&normalized_key)
+    {
         println!("{value}");
     } else {
         println!("<unset>");
@@ -248,7 +263,10 @@ fn event_kind_set(agent: Option<Agent>, key: &str, value: &str) -> Result<()> {
     }
 
     state::save(&state_path, &local_state)?;
-    println!("event-kind label for {} updated", template_scope_label(agent));
+    println!(
+        "event-kind label for {} updated",
+        template_scope_label(agent)
+    );
     Ok(())
 }
 
@@ -270,6 +288,27 @@ fn event_kind_reset(agent: Option<Agent>, key: &str) -> Result<()> {
     Ok(())
 }
 
+fn subagent_get() -> Result<()> {
+    let state_path = paths::local_state_path()?;
+    let local_state = state::load(&state_path)?;
+    println!("{}", local_state.notifications.claude_subagent);
+    Ok(())
+}
+
+fn subagent_set(enabled: bool) -> Result<()> {
+    let state_path = paths::local_state_path()?;
+    let mut local_state = state::load(&state_path)?;
+    if local_state.notifications.claude_subagent == enabled {
+        println!("subagent notifications unchanged");
+        return Ok(());
+    }
+
+    local_state.notifications.claude_subagent = enabled;
+    state::save(&state_path, &local_state)?;
+    println!("subagent notifications updated");
+    Ok(())
+}
+
 fn setup_agents(agents: Vec<SetupAgent>) -> Result<()> {
     let executable_path =
         std::env::current_exe().context("failed to resolve current executable path")?;
@@ -286,7 +325,7 @@ fn setup_agents(agents: Vec<SetupAgent>) -> Result<()> {
                 let changed = claude::setup(&claude_path, &executable_path)?;
                 if changed {
                     println!(
-                        "Claude setup: installed Stop hook in {}",
+                        "Claude setup: installed managed hooks in {}",
                         claude_path.display()
                     );
                 } else {
@@ -332,7 +371,7 @@ fn remove_agents(agents: Vec<SetupAgent>) -> Result<()> {
             SetupAgent::Claude => {
                 let changed = claude::remove(&claude_path)?;
                 if changed {
-                    println!("Claude remove: removed managed Stop hook");
+                    println!("Claude remove: removed managed hooks");
                 } else {
                     println!("Claude remove: no managed hook found");
                 }
@@ -417,6 +456,13 @@ fn ingest_event(
         }
     };
 
+    if is_claude_subagent_event(&event) && !local_state.notifications.claude_subagent {
+        if verbose {
+            eprintln!("ingest: claude subagent notification disabled, skipping");
+        }
+        return Ok(());
+    }
+
     speech::speak(&event, &local_state)?;
     if verbose {
         let cwd = event
@@ -456,9 +502,9 @@ fn doctor() -> Result<()> {
     }
 
     match claude::is_configured(&claude_path)? {
-        true => println!("[ok] claude: managed Stop hook configured"),
+        true => println!("[ok] claude: managed hooks configured"),
         false => {
-            println!("[info] claude: managed Stop hook not configured");
+            println!("[info] claude: managed hooks not configured");
         }
     }
 
@@ -486,4 +532,13 @@ fn dedup_agents(agents: Vec<SetupAgent>) -> Vec<SetupAgent> {
         }
     }
     ordered
+}
+
+fn is_claude_subagent_event(event: &agitiser_notify::event::NormalizedEvent) -> bool {
+    event.agent == Agent::Claude
+        && event
+            .raw_payload
+            .get("hook_event_name")
+            .and_then(Value::as_str)
+            == Some("SubagentStop")
 }
