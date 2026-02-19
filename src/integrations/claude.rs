@@ -32,12 +32,12 @@ pub fn remove(settings_path: &Path) -> Result<bool> {
     }
 
     let mut settings = load_settings(settings_path)?;
-    let previous_settings = settings.clone();
+    let had_managed_hooks = has_managed_hook(&settings);
     let changed = apply_remove(&mut settings);
-    if settings != previous_settings {
+    if changed {
         write_settings(settings_path, &settings)?;
     }
-    Ok(changed)
+    Ok(had_managed_hooks && !has_managed_hook(&settings))
 }
 
 pub fn is_configured(settings_path: &Path) -> Result<bool> {
