@@ -2,6 +2,7 @@
 name = "agitiser-notify"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.85"
 description = "Speech-dispatcher notifier for agent task completion events"
 license = "MIT"
 
