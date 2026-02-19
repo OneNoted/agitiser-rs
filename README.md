@@ -8,8 +8,9 @@ Rust CLI that announces agent task completion with `speech-dispatcher` (`spd-say
 - Speaks `"<Agent> finished a <event_kind> in the <project> project"` by default.
 - Supports configurable announcement templates (global and per-agent).
 - Supports configurable event-kind labels (for example `task-end -> task`).
+- Supports toggling Claude subagent completion notifications.
 - Auto-setup for:
-  - Claude Code (`~/.claude/settings.json` Stop hook)
+  - Claude Code (`~/.claude/settings.json` managed completion hooks)
   - Codex (`~/.codex/config.toml` notify command)
 - Manual integration path for OpenCode.
 
@@ -48,6 +49,13 @@ agitiser-notify config template reset --agent codex
 # Manage event-kind labels used by {{event_kind}}
 agitiser-notify config event-kind set --key task-end --value task
 agitiser-notify config event-kind set --agent codex --key task-end --value turn
+agitiser-notify config event-kind set --agent codex --key plan-end --value plan
+agitiser-notify config event-kind set --agent claude --key plan-end --value plan
+
+# Toggle Claude subagent completion notifications (default: true)
+agitiser-notify config subagent get
+agitiser-notify config subagent set --enabled false
+
 agitiser-notify config event-kind get --key task-end
 agitiser-notify config event-kind reset --agent codex --key task-end
 ```
@@ -57,7 +65,11 @@ agitiser-notify config event-kind reset --agent codex --key task-end
 ```bash
 # Agent-specific parsing
 agitiser-notify ingest --agent claude
+agitiser-notify ingest --agent claude '{"hook_event_name":"Stop","cwd":"/path/to/project"}'
+agitiser-notify ingest --agent claude '{"hook_event_name":"SubagentStop","cwd":"/path/to/project"}'
+agitiser-notify ingest --agent claude '{"hook_event_name":"PermissionRequest","tool_name":"ExitPlanMode","cwd":"/path/to/project"}'
 agitiser-notify ingest --agent codex '{"type":"agent-turn-complete","cwd":"/path/to/project"}'
+agitiser-notify ingest --agent codex '{"type":"agent-plan-complete","cwd":"/path/to/project"}'
 
 # Generic payload mode
 agitiser-notify ingest --agent generic --payload '{"event_kind":"completed","cwd":"/path/to/project"}'
@@ -102,5 +114,21 @@ Event-kind label precedence for `{{event_kind}}` is:
 
 1. Per-agent label from `config event-kind ... --agent ...`
 2. Global label from `config event-kind ...`
-3. Built-in label map (`task-end` -> `task`)
+3. Built-in label map (`task-end` -> `task`, `plan-end` -> `plan`)
 4. Built-in humanized fallback (for example `task-completed` -> `task completed`)
+
+For Claude events, normalization maps:
+- `Stop` -> `task-end`
+- `SubagentStop` -> `plan-end` (can be disabled with `config subagent set --enabled false`)
+- `PermissionRequest` with `tool_name=ExitPlanMode` -> `plan-end`
+
+For Codex events, normalization maps:
+- `agent-turn-complete` -> `task-end`
+- `agent-plan-complete` -> `plan-end`
+
+Built-in labels map:
+- `task-end` -> `task`
+- `plan-end` -> `plan`
+
+Built-in default plan announcement:
+- `{{agent}} finished planning in {{project}}.`
