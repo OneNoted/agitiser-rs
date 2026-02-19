@@ -76,6 +76,10 @@ pub enum ConfigCommand {
         #[command(subcommand)]
         command: EventKindCommand,
     },
+    Subagent {
+        #[command(subcommand)]
+        command: SubagentCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -117,5 +121,14 @@ pub enum EventKindCommand {
         agent: Option<Agent>,
         #[arg(long)]
         key: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SubagentCommand {
+    Get,
+    Set {
+        #[arg(long, action = clap::ArgAction::Set)]
+        enabled: bool,
     },
 }

@@ -48,38 +48,57 @@ pub fn project_name_from_cwd(cwd: Option<&str>) -> String {
 
 fn normalize_claude(payload: Value) -> Option<NormalizedEvent> {
     let object = payload.as_object()?;
-    let hook_event = object.get("hook_event_name").and_then(Value::as_str)?;
-    if hook_event != "Stop" {
-        return None;
-    }
+    let event_kind = claude_event_kind(object)?;
 
     let cwd_str = object.get("cwd").and_then(Value::as_str);
     let cwd = cwd_str.map(PathBuf::from);
     Some(NormalizedEvent {
         agent: Agent::Claude,
-        event_kind: "task-end".to_string(),
+        event_kind: event_kind.to_string(),
         project_name: project_name_from_cwd(cwd_str),
         cwd,
         raw_payload: payload,
     })
 }
 
+fn claude_event_kind(object: &serde_json::Map<String, Value>) -> Option<&'static str> {
+    let hook_event = object.get("hook_event_name").and_then(Value::as_str)?;
+    match hook_event {
+        "Stop" => Some("task-end"),
+        "SubagentStop" => Some("plan-end"),
+        "PermissionRequest" if is_exit_plan_mode_request(object) => Some("plan-end"),
+        _ => None,
+    }
+}
+
+fn is_exit_plan_mode_request(object: &serde_json::Map<String, Value>) -> bool {
+    object.get("tool_name").and_then(Value::as_str) == Some("ExitPlanMode")
+        || object.get("tool").and_then(Value::as_str) == Some("ExitPlanMode")
+        || object.get("query").and_then(Value::as_str) == Some("ExitPlanMode")
+}
+
 fn normalize_codex(payload: Value) -> Option<NormalizedEvent> {
     let object = payload.as_object()?;
     let kind = object.get("type").and_then(Value::as_str)?;
-    if kind != "agent-turn-complete" {
-        return None;
-    }
+    let event_kind = codex_event_kind(kind)?;
 
     let cwd_str = object.get("cwd").and_then(Value::as_str);
     let cwd = cwd_str.map(PathBuf::from);
     Some(NormalizedEvent {
         agent: Agent::Codex,
-        event_kind: "task-end".to_string(),
+        event_kind: event_kind.to_string(),
         project_name: project_name_from_cwd(cwd_str),
         cwd,
         raw_payload: payload,
     })
+}
+
+fn codex_event_kind(kind: &str) -> Option<&'static str> {
+    match kind {
+        "agent-turn-complete" => Some("task-end"),
+        "agent-plan-complete" => Some("plan-end"),
+        _ => None,
+    }
 }
 
 fn normalize_generic(payload: Value) -> Option<NormalizedEvent> {
@@ -140,7 +159,48 @@ mod tests {
         });
 
         let normalized = normalize(Agent::Claude, payload).expect("expected stop event");
+        assert_eq!(normalized.event_kind, "task-end");
         assert_eq!(normalized.project_name, "agitiser");
+    }
+
+    #[test]
+    fn parses_claude_subagent_stop_event() {
+        let payload = json!({
+            "session_id": "abc",
+            "hook_event_name": "SubagentStop",
+            "cwd": "/home/notes/Projects/agitiser"
+        });
+
+        let normalized =
+            normalize(Agent::Claude, payload).expect("expected claude subagent stop event");
+        assert_eq!(normalized.event_kind, "plan-end");
+        assert_eq!(normalized.project_name, "agitiser");
+    }
+
+    #[test]
+    fn parses_claude_exit_plan_mode_permission_request() {
+        let payload = json!({
+            "session_id": "abc",
+            "hook_event_name": "PermissionRequest",
+            "tool_name": "ExitPlanMode",
+            "cwd": "/home/notes/Projects/agitiser"
+        });
+
+        let normalized = normalize(Agent::Claude, payload)
+            .expect("expected claude plan completion permission request");
+        assert_eq!(normalized.event_kind, "plan-end");
+        assert_eq!(normalized.project_name, "agitiser");
+    }
+
+    #[test]
+    fn ignores_non_exit_plan_mode_permission_requests() {
+        let payload = json!({
+            "hook_event_name": "PermissionRequest",
+            "tool_name": "Bash",
+            "cwd": "/tmp/demo"
+        });
+
+        assert!(normalize(Agent::Claude, payload).is_none());
     }
 
     #[test]
@@ -160,7 +220,31 @@ mod tests {
         });
 
         let normalized = normalize(Agent::Codex, payload).expect("expected codex completion");
+        assert_eq!(normalized.event_kind, "task-end");
         assert_eq!(normalized.project_name, "notiser");
+    }
+
+    #[test]
+    fn parses_codex_plan_complete_event() {
+        let payload = json!({
+            "type": "agent-plan-complete",
+            "cwd": "/home/notes/Projects/notiser"
+        });
+
+        let normalized =
+            normalize(Agent::Codex, payload).expect("expected codex planning completion");
+        assert_eq!(normalized.event_kind, "plan-end");
+        assert_eq!(normalized.project_name, "notiser");
+    }
+
+    #[test]
+    fn ignores_unknown_codex_completion_events() {
+        let payload = json!({
+            "type": "something-complete",
+            "cwd": "/tmp/demo"
+        });
+
+        assert!(normalize(Agent::Codex, payload).is_none());
     }
 
     #[test]

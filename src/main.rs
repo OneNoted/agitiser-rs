@@ -12,7 +12,9 @@ use std::collections::BTreeMap;
 use std::io::{self, IsTerminal, Read};
 use std::path::Path;
 
-use crate::cli::{Cli, Commands, ConfigCommand, EventKindCommand, ShellArg, TemplateCommand};
+use crate::cli::{
+    Cli, Commands, ConfigCommand, EventKindCommand, ShellArg, SubagentCommand, TemplateCommand,
+};
 
 fn main() {
     if let Err(error) = run() {
@@ -88,6 +90,7 @@ fn handle_config(command: ConfigCommand) -> Result<()> {
     match command {
         ConfigCommand::Template { command } => handle_template_config(command),
         ConfigCommand::EventKind { command } => handle_event_kind_config(command),
+        ConfigCommand::Subagent { command } => handle_subagent_config(command),
     }
 }
 
@@ -166,6 +169,13 @@ fn handle_event_kind_config(command: EventKindCommand) -> Result<()> {
         EventKindCommand::Get { agent, key } => event_kind_get(agent, &key),
         EventKindCommand::Set { agent, key, value } => event_kind_set(agent, &key, &value),
         EventKindCommand::Reset { agent, key } => event_kind_reset(agent, &key),
+    }
+}
+
+fn handle_subagent_config(command: SubagentCommand) -> Result<()> {
+    match command {
+        SubagentCommand::Get => subagent_get(),
+        SubagentCommand::Set { enabled } => subagent_set(enabled),
     }
 }
 
@@ -278,6 +288,27 @@ fn event_kind_reset(agent: Option<Agent>, key: &str) -> Result<()> {
     Ok(())
 }
 
+fn subagent_get() -> Result<()> {
+    let state_path = paths::local_state_path()?;
+    let local_state = state::load(&state_path)?;
+    println!("{}", local_state.notifications.claude_subagent);
+    Ok(())
+}
+
+fn subagent_set(enabled: bool) -> Result<()> {
+    let state_path = paths::local_state_path()?;
+    let mut local_state = state::load(&state_path)?;
+    if local_state.notifications.claude_subagent == enabled {
+        println!("subagent notifications unchanged");
+        return Ok(());
+    }
+
+    local_state.notifications.claude_subagent = enabled;
+    state::save(&state_path, &local_state)?;
+    println!("subagent notifications updated");
+    Ok(())
+}
+
 fn setup_agents(agents: Vec<SetupAgent>) -> Result<()> {
     let executable_path =
         std::env::current_exe().context("failed to resolve current executable path")?;
@@ -294,7 +325,7 @@ fn setup_agents(agents: Vec<SetupAgent>) -> Result<()> {
                 let changed = claude::setup(&claude_path, &executable_path)?;
                 if changed {
                     println!(
-                        "Claude setup: installed Stop hook in {}",
+                        "Claude setup: installed managed hooks in {}",
                         claude_path.display()
                     );
                 } else {
@@ -340,7 +371,7 @@ fn remove_agents(agents: Vec<SetupAgent>) -> Result<()> {
             SetupAgent::Claude => {
                 let changed = claude::remove(&claude_path)?;
                 if changed {
-                    println!("Claude remove: removed managed Stop hook");
+                    println!("Claude remove: removed managed hooks");
                 } else {
                     println!("Claude remove: no managed hook found");
                 }
@@ -425,6 +456,13 @@ fn ingest_event(
         }
     };
 
+    if is_claude_subagent_event(&event) && !local_state.notifications.claude_subagent {
+        if verbose {
+            eprintln!("ingest: claude subagent notification disabled, skipping");
+        }
+        return Ok(());
+    }
+
     speech::speak(&event, &local_state)?;
     if verbose {
         let cwd = event
@@ -464,9 +502,9 @@ fn doctor() -> Result<()> {
     }
 
     match claude::is_configured(&claude_path)? {
-        true => println!("[ok] claude: managed Stop hook configured"),
+        true => println!("[ok] claude: managed hooks configured"),
         false => {
-            println!("[info] claude: managed Stop hook not configured");
+            println!("[info] claude: managed hooks not configured");
         }
     }
 
@@ -494,4 +532,13 @@ fn dedup_agents(agents: Vec<SetupAgent>) -> Vec<SetupAgent> {
         }
     }
     ordered
+}
+
+fn is_claude_subagent_event(event: &agitiser_notify::event::NormalizedEvent) -> bool {
+    event.agent == Agent::Claude
+        && event
+            .raw_payload
+            .get("hook_event_name")
+            .and_then(Value::as_str)
+            == Some("SubagentStop")
 }

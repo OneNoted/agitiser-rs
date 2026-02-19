@@ -10,6 +10,7 @@ use crate::state::{EventKindLabelsConfig, TemplateConfig};
 const TEMPLATE_NAME: &str = "announcement";
 const BUILTIN_DEFAULT_TEMPLATE: &str =
     "{{agent}} finished a {{event_kind}} in the {{project}} project";
+const BUILTIN_PLAN_END_TEMPLATE: &str = "{{agent}} finished planning in {{project}}.";
 
 #[derive(Debug, Serialize)]
 struct AnnouncementContext<'a> {
@@ -63,12 +64,10 @@ fn resolve_event_kind_label(event: &NormalizedEvent, labels: &EventKindLabelsCon
         .get(&key)
         .map(String::as_str)
         .or_else(|| labels.global.get(&key).map(String::as_str))
-        .or_else(|| {
-            if key == "task-end" {
-                Some("task")
-            } else {
-                None
-            }
+        .or(match key.as_str() {
+            "task-end" => Some("task"),
+            "plan-end" => Some("plan"),
+            _ => None,
         })
         .map(|label| label.trim())
         .filter(|label| !label.is_empty());
@@ -139,14 +138,28 @@ pub fn render_announcement_message(
     event_kind_labels: &EventKindLabelsConfig,
 ) -> String {
     let event_kind_label = resolve_event_kind_label(event, event_kind_labels);
-    let default_message = render_template(BUILTIN_DEFAULT_TEMPLATE, event, &event_kind_label)
+    let is_plan_end = normalize_event_kind_key(&event.event_kind) == "plan-end";
+    let builtin_template = if is_plan_end {
+        BUILTIN_PLAN_END_TEMPLATE
+    } else {
+        BUILTIN_DEFAULT_TEMPLATE
+    };
+    let default_message = render_template(builtin_template, event, &event_kind_label)
         .unwrap_or_else(|| {
-            format!(
-                "{} finished a {} in the {} project",
-                event.agent.display_name(),
-                event_kind_label,
-                event.project_name
-            )
+            if is_plan_end {
+                format!(
+                    "{} finished planning in {}.",
+                    event.agent.display_name(),
+                    event.project_name
+                )
+            } else {
+                format!(
+                    "{} finished a {} in the {} project",
+                    event.agent.display_name(),
+                    event_kind_label,
+                    event.project_name
+                )
+            }
         });
 
     match resolve_template(templates, event.agent) {
@@ -178,6 +191,17 @@ mod tests {
             }),
         )
         .expect("expected codex event")
+    }
+
+    fn codex_plan_event() -> NormalizedEvent {
+        normalize(
+            Agent::Codex,
+            json!({
+                "type": "agent-plan-complete",
+                "cwd": "/home/user/Projects/backend"
+            }),
+        )
+        .expect("expected codex planning event")
     }
 
     #[test]
@@ -240,6 +264,15 @@ mod tests {
     }
 
     #[test]
+    fn render_uses_builtin_plan_end_label_without_override() {
+        let event = codex_plan_event();
+        let templates = TemplateConfig::default();
+
+        let message = render_announcement_message(&event, &templates, &empty_labels());
+        assert_eq!(message, "Codex finished planning in backend.");
+    }
+
+    #[test]
     fn render_uses_configured_global_event_kind_label() {
         let event = codex_event();
         let templates = TemplateConfig {
@@ -253,6 +286,22 @@ mod tests {
 
         let message = render_announcement_message(&event, &templates, &labels);
         assert_eq!(message, "task");
+    }
+
+    #[test]
+    fn render_uses_configured_plan_end_label() {
+        let event = codex_plan_event();
+        let templates = TemplateConfig {
+            global: Some("{{event_kind}}".to_string()),
+            agents: AgentTemplateConfig::default(),
+        };
+        let labels = EventKindLabelsConfig {
+            global: BTreeMap::from([("plan-end".to_string(), "plan".to_string())]),
+            agents: AgentEventKindLabelsConfig::default(),
+        };
+
+        let message = render_announcement_message(&event, &templates, &labels);
+        assert_eq!(message, "plan");
     }
 
     #[test]

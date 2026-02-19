@@ -4,6 +4,9 @@ use std::fs;
 use std::path::Path;
 
 const STOP_EVENT: &str = "Stop";
+const SUBAGENT_STOP_EVENT: &str = "SubagentStop";
+const PERMISSION_REQUEST_EVENT: &str = "PermissionRequest";
+const PERMISSION_REQUEST_MATCHER: &str = "ExitPlanMode";
 const SOURCE_MARKER: &str = "--source claude-hook";
 
 pub fn managed_command(executable_path: &Path) -> String {
@@ -52,9 +55,110 @@ pub fn apply_setup(settings: &mut Value, command: &str) -> bool {
     let root_obj = ensure_root_object(settings);
     let hooks_obj = ensure_object_entry(root_obj, "hooks");
     let stop_hooks = ensure_array_entry(hooks_obj, STOP_EVENT);
+    if ensure_managed_hook(stop_hooks, command, "*") {
+        changed = true;
+    }
 
+    let subagent_stop_hooks = ensure_array_entry(hooks_obj, SUBAGENT_STOP_EVENT);
+    if ensure_managed_hook(subagent_stop_hooks, command, "*") {
+        changed = true;
+    }
+
+    let permission_request_hooks = ensure_array_entry(hooks_obj, PERMISSION_REQUEST_EVENT);
+    if ensure_managed_hook(
+        permission_request_hooks,
+        command,
+        PERMISSION_REQUEST_MATCHER,
+    ) {
+        changed = true;
+    }
+
+    changed
+}
+
+pub fn apply_remove(settings: &mut Value) -> bool {
+    let mut changed = false;
+
+    let root_obj = match settings.as_object_mut() {
+        Some(root_obj) => root_obj,
+        None => return false,
+    };
+
+    let hooks_obj = match root_obj.get_mut("hooks").and_then(Value::as_object_mut) {
+        Some(hooks_obj) => hooks_obj,
+        None => return false,
+    };
+
+    for event in [STOP_EVENT, SUBAGENT_STOP_EVENT, PERMISSION_REQUEST_EVENT] {
+        let mut remove_event = false;
+        if let Some(event_hooks) = hooks_obj.get_mut(event).and_then(Value::as_array_mut) {
+            if remove_managed_hooks(event_hooks) {
+                changed = true;
+            }
+            remove_event = event_hooks.is_empty();
+        }
+        if remove_event {
+            hooks_obj.remove(event);
+            changed = true;
+        }
+    }
+
+    if hooks_obj.is_empty() {
+        root_obj.remove("hooks");
+        changed = true;
+    }
+
+    changed
+}
+
+fn has_managed_hook(settings: &Value) -> bool {
+    let hooks_obj = match settings.get("hooks").and_then(Value::as_object) {
+        Some(hooks_obj) => hooks_obj,
+        None => return false,
+    };
+
+    [STOP_EVENT, SUBAGENT_STOP_EVENT, PERMISSION_REQUEST_EVENT]
+        .iter()
+        .any(|event| {
+            hooks_obj
+                .get(*event)
+                .and_then(Value::as_array)
+                .map(|entries| event_has_managed_hook(entries))
+                .unwrap_or(false)
+        })
+}
+
+fn is_managed_command(command: &str) -> bool {
+    command.contains("ingest --agent claude") && command.contains(SOURCE_MARKER)
+}
+
+fn event_has_managed_hook(entries: &[Value]) -> bool {
+    entries.iter().any(|entry| {
+        entry
+            .get("hooks")
+            .and_then(Value::as_array)
+            .map(|hooks| {
+                hooks.iter().any(|hook| {
+                    hook.get("command")
+                        .and_then(Value::as_str)
+                        .map(is_managed_command)
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
+    })
+}
+
+fn ensure_managed_hook(event_hooks: &mut Vec<Value>, command: &str, matcher: &str) -> bool {
+    let mut changed = false;
     let mut desired_exists = false;
-    for entry in stop_hooks.iter_mut() {
+
+    for entry in event_hooks.iter_mut() {
+        let entry_matcher_matches = entry
+            .get("matcher")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            == matcher;
         if let Some(hooks_array) = entry
             .as_object_mut()
             .and_then(|obj| obj.get_mut("hooks"))
@@ -72,7 +176,7 @@ pub fn apply_setup(settings: &mut Value, command: &str) -> bool {
                     return true;
                 }
 
-                if hook_command == command && !desired_exists {
+                if hook_command == command && entry_matcher_matches && !desired_exists {
                     desired_exists = true;
                     true
                 } else {
@@ -86,21 +190,21 @@ pub fn apply_setup(settings: &mut Value, command: &str) -> bool {
         }
     }
 
-    let original_len = stop_hooks.len();
-    stop_hooks.retain(|entry| {
+    let original_len = event_hooks.len();
+    event_hooks.retain(|entry| {
         entry
             .get("hooks")
             .and_then(Value::as_array)
             .map(|hooks| !hooks.is_empty())
             .unwrap_or(true)
     });
-    if stop_hooks.len() != original_len {
+    if event_hooks.len() != original_len {
         changed = true;
     }
 
     if !desired_exists {
-        stop_hooks.push(json!({
-            "matcher": "*",
+        event_hooks.push(json!({
+            "matcher": matcher,
             "hooks": [
                 {
                     "type": "command",
@@ -114,43 +218,10 @@ pub fn apply_setup(settings: &mut Value, command: &str) -> bool {
     changed
 }
 
-pub fn apply_remove(settings: &mut Value) -> bool {
+fn remove_managed_hooks(event_hooks: &mut Vec<Value>) -> bool {
     let mut changed = false;
 
-    // Check for empty Stop array upfront and clean it up
-    if let Some(is_empty) = settings
-        .get("hooks")
-        .and_then(|h| h.get(STOP_EVENT))
-        .and_then(Value::as_array)
-        .map(|a| a.is_empty())
-    {
-        if is_empty {
-            let root_obj = settings.as_object_mut().unwrap();
-            let hooks_obj = root_obj.get_mut("hooks").unwrap().as_object_mut().unwrap();
-            hooks_obj.remove(STOP_EVENT);
-            if hooks_obj.is_empty() {
-                root_obj.remove("hooks");
-            }
-            return false;
-        }
-    }
-
-    let root_obj = match settings.as_object_mut() {
-        Some(root_obj) => root_obj,
-        None => return false,
-    };
-
-    let hooks_obj = match root_obj.get_mut("hooks").and_then(Value::as_object_mut) {
-        Some(hooks_obj) => hooks_obj,
-        None => return false,
-    };
-
-    let stop_hooks = match hooks_obj.get_mut(STOP_EVENT).and_then(Value::as_array_mut) {
-        Some(stop_hooks) => stop_hooks,
-        None => return false,
-    };
-
-    for entry in stop_hooks.iter_mut() {
+    for entry in event_hooks.iter_mut() {
         if let Some(hooks_array) = entry
             .as_object_mut()
             .and_then(|obj| obj.get_mut("hooks"))
@@ -170,56 +241,19 @@ pub fn apply_remove(settings: &mut Value) -> bool {
         }
     }
 
-    let original_len = stop_hooks.len();
-    stop_hooks.retain(|entry| {
+    let original_len = event_hooks.len();
+    event_hooks.retain(|entry| {
         entry
             .get("hooks")
             .and_then(Value::as_array)
             .map(|hooks| !hooks.is_empty())
             .unwrap_or(true)
     });
-    if stop_hooks.len() != original_len {
-        changed = true;
-    }
-
-    if stop_hooks.is_empty() {
-        hooks_obj.remove(STOP_EVENT);
-        changed = true;
-    }
-    if hooks_obj.is_empty() {
-        root_obj.remove("hooks");
+    if event_hooks.len() != original_len {
         changed = true;
     }
 
     changed
-}
-
-fn has_managed_hook(settings: &Value) -> bool {
-    settings
-        .get("hooks")
-        .and_then(|hooks| hooks.get(STOP_EVENT))
-        .and_then(Value::as_array)
-        .map(|entries| {
-            entries.iter().any(|entry| {
-                entry
-                    .get("hooks")
-                    .and_then(Value::as_array)
-                    .map(|hooks| {
-                        hooks.iter().any(|hook| {
-                            hook.get("command")
-                                .and_then(Value::as_str)
-                                .map(is_managed_command)
-                                .unwrap_or(false)
-                        })
-                    })
-                    .unwrap_or(false)
-            })
-        })
-        .unwrap_or(false)
-}
-
-fn is_managed_command(command: &str) -> bool {
-    command.contains("ingest --agent claude") && command.contains(SOURCE_MARKER)
 }
 
 fn load_settings(settings_path: &Path) -> Result<Value> {
@@ -285,24 +319,73 @@ mod tests {
 
     use super::*;
 
+    fn managed_hook_count(settings: &Value, event: &str) -> usize {
+        settings["hooks"][event]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.get("hooks").and_then(Value::as_array))
+            .flatten()
+            .filter_map(|hook| hook.get("command").and_then(Value::as_str))
+            .filter(|command| is_managed_command(command))
+            .count()
+    }
+
     #[test]
     fn setup_is_idempotent() {
         let command =
             "AGITISER_NOTIFY=1 '/tmp/agitiser-notify' ingest --agent claude --source claude-hook";
         let mut settings = json!({});
 
-        assert!(apply_setup(&mut settings, command));
-        assert!(!apply_setup(&mut settings, command));
+        assert!(
+            apply_setup(&mut settings, command),
+            "first setup should change"
+        );
+        assert_eq!(managed_hook_count(&settings, STOP_EVENT), 1);
+        assert_eq!(managed_hook_count(&settings, SUBAGENT_STOP_EVENT), 1);
+        assert_eq!(managed_hook_count(&settings, PERMISSION_REQUEST_EVENT), 1);
+        assert_eq!(
+            settings["hooks"][PERMISSION_REQUEST_EVENT][0]["matcher"],
+            PERMISSION_REQUEST_MATCHER
+        );
+        assert!(
+            !apply_setup(&mut settings, command),
+            "second setup should be idempotent"
+        );
+        assert_eq!(managed_hook_count(&settings, STOP_EVENT), 1);
+        assert_eq!(managed_hook_count(&settings, SUBAGENT_STOP_EVENT), 1);
+        assert_eq!(managed_hook_count(&settings, PERMISSION_REQUEST_EVENT), 1);
+        assert_eq!(
+            settings["hooks"][PERMISSION_REQUEST_EVENT][0]["matcher"],
+            PERMISSION_REQUEST_MATCHER
+        );
     }
 
     #[test]
-    fn remove_keeps_unmanaged_stop_hooks() {
+    fn remove_keeps_unmanaged_hooks_for_stop_and_subagent_stop() {
         let mut settings = json!({
             "hooks": {
                 "Stop": [
                     {
                         "hooks": [
                             {"type": "command", "command": "echo custom"},
+                            {"type": "command", "command": "AGITISER_NOTIFY=1 '/tmp/agitiser-notify' ingest --agent claude --source claude-hook"}
+                        ]
+                    }
+                ],
+                "SubagentStop": [
+                    {
+                        "hooks": [
+                            {"type": "command", "command": "echo custom-subagent"},
+                            {"type": "command", "command": "AGITISER_NOTIFY=1 '/tmp/agitiser-notify' ingest --agent claude --source claude-hook"}
+                        ]
+                    }
+                ],
+                "PermissionRequest": [
+                    {
+                        "matcher": "ExitPlanMode",
+                        "hooks": [
+                            {"type": "command", "command": "echo custom-permission"},
                             {"type": "command", "command": "AGITISER_NOTIFY=1 '/tmp/agitiser-notify' ingest --agent claude --source claude-hook"}
                         ]
                     }
@@ -316,18 +399,31 @@ mod tests {
             .expect("stop hook array");
         assert_eq!(stop_hooks.len(), 1);
         assert_eq!(stop_hooks[0]["command"], "echo custom");
+
+        let subagent_stop_hooks = settings["hooks"]["SubagentStop"][0]["hooks"]
+            .as_array()
+            .expect("subagent stop hook array");
+        assert_eq!(subagent_stop_hooks.len(), 1);
+        assert_eq!(subagent_stop_hooks[0]["command"], "echo custom-subagent");
+
+        let permission_hooks = settings["hooks"]["PermissionRequest"][0]["hooks"]
+            .as_array()
+            .expect("permission request hook array");
+        assert_eq!(permission_hooks.len(), 1);
+        assert_eq!(permission_hooks[0]["command"], "echo custom-permission");
     }
 
     #[test]
-    fn remove_cleans_up_empty_stop_array() {
+    fn remove_cleans_up_empty_stop_and_subagent_stop_arrays() {
         let mut settings = json!({
             "hooks": {
-                "Stop": []
+                "Stop": [],
+                "SubagentStop": [],
+                "PermissionRequest": []
             }
         });
 
-        // Should return false (no managed hooks were removed) but clean up the empty array
-        assert!(!apply_remove(&mut settings));
+        assert!(apply_remove(&mut settings));
         assert!(settings.get("hooks").is_none());
     }
 }
