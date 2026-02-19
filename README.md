@@ -1,26 +1,24 @@
 # agitiser-notify
 
-Rust CLI that announces agent task completion with `speech-dispatcher` (`spd-say`), including configurable message. 
+[![CI](https://github.com/OneNoted/agitiser-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/OneNoted/agitiser-rs/actions/workflows/ci.yml)
+[![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-orange?logo=rust)](https://www.rust-lang.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-*this may be the most horrible thing I've ever made truly ai slop ;-; but hey it works!!*
+`agitiser-notify` is a Rust CLI that announces agent completion events using `speech-dispatcher` (`spd-say`).
 
-## Features
+## Highlights
 
-- Announces only end-of-task events.
-- Speaks `"<Agent> finished a <event_kind> in the <project> project"` by default.
-- Supports configurable announcement templates (global and per-agent).
-- Supports configurable event-kind labels (for example `task-end -> task`).
+- Announces terminal task/planning events for Claude, Codex, and generic payloads.
+- Supports managed integration setup/remove for Claude and Codex.
+- Supports configurable speech templates and event-kind labels.
 - Supports toggling Claude subagent completion notifications.
-- Auto-setup for:
-  - Claude Code (`~/.claude/settings.json` managed completion hooks)
-  - Codex (`~/.codex/config.toml` notify command)
-- Manual integration path for OpenCode.
+- Includes shell completions and a `doctor` command for health checks.
 
-## Platform Support
+## Requirements
 
-- Linux is the primary supported platform for this release.
-- `speech-dispatcher` (`spd-say`) must be available in `PATH`.
-- macOS and Windows are not currently first-class supported notifier backends.
+- Rust `1.85+`
+- Linux with `speech-dispatcher` installed (`spd-say` in `PATH`)
+- macOS and Windows are not currently first-class supported backends
 
 ## Build
 
@@ -28,79 +26,81 @@ Rust CLI that announces agent task completion with `speech-dispatcher` (`spd-say
 cargo build --release
 ```
 
-## Usage
+## Quick Start
 
 ```bash
-# Install hooks/config for Claude + Codex
+# Install managed integration for Claude + Codex
 agitiser-notify setup
 
-# Remove managed Claude + Codex integration
-agitiser-notify remove
-
-# Health checks
+# Health check
 agitiser-notify doctor
 
+# Remove managed integration
+agitiser-notify remove
+```
+
+## Common Commands
+
+```bash
 # Generate shell completions (stdout)
 agitiser-notify completions --shell fish > ~/.config/fish/completions/agitiser-notify.fish
 agitiser-notify completions --shell zsh > ~/.zfunc/_agitiser-notify
 agitiser-notify completions --shell bash > /etc/bash_completion.d/agitiser-notify
-# Auto-detect shell from $SHELL
-agitiser-notify completions > /tmp/agitiser-notify.completion
+agitiser-notify completions > /tmp/agitiser-notify.completion  # auto-detect via $SHELL
 
-# Manage spoken message templates
+# Template configuration
 agitiser-notify config template get
 agitiser-notify config template set --value '{{agent}} finished a {{event_kind}} in the {{project}} project'
 agitiser-notify config template get --agent codex
 agitiser-notify config template set --agent codex --value 'Codex done in {{project}}'
 agitiser-notify config template reset --agent codex
 
-# Manage event-kind labels used by {{event_kind}}
+# Event-kind labels used by {{event_kind}}
 agitiser-notify config event-kind set --key task-end --value task
 agitiser-notify config event-kind set --agent codex --key task-end --value turn
 agitiser-notify config event-kind set --agent codex --key plan-end --value plan
 agitiser-notify config event-kind set --agent claude --key plan-end --value plan
-
-# Toggle Claude subagent completion notifications (default: true)
-agitiser-notify config subagent get
-agitiser-notify config subagent set --enabled false
-
 agitiser-notify config event-kind get --key task-end
 agitiser-notify config event-kind reset --agent codex --key task-end
+
+# Claude subagent notification toggle (default: true)
+agitiser-notify config subagent get
+agitiser-notify config subagent set --enabled false
 ```
 
 ## Ingest API
 
 ```bash
-# Agent-specific parsing
-agitiser-notify ingest --agent claude
+# Claude
 agitiser-notify ingest --agent claude '{"hook_event_name":"Stop","cwd":"/path/to/project"}'
 agitiser-notify ingest --agent claude '{"hook_event_name":"SubagentStop","cwd":"/path/to/project"}'
 agitiser-notify ingest --agent claude '{"hook_event_name":"PermissionRequest","tool_name":"ExitPlanMode","cwd":"/path/to/project"}'
+
+# Codex
 agitiser-notify ingest --agent codex '{"type":"agent-turn-complete","cwd":"/path/to/project"}'
 agitiser-notify ingest --agent codex '{"type":"agent-plan-complete","cwd":"/path/to/project"}'
 
-# Generic payload mode
+# Generic
 agitiser-notify ingest --agent generic --payload '{"event_kind":"completed","cwd":"/path/to/project"}'
 ```
 
-## OpenCode Manual Integration (v1)
+## Event Normalization
 
-OpenCode auto-setup is not implemented in this release.
+Claude mappings:
+- `Stop` -> `task-end`
+- `SubagentStop` -> `plan-end` (can be disabled with `config subagent set --enabled false`)
+- `PermissionRequest` with `tool_name=ExitPlanMode` -> `plan-end`
 
-Use a manual hook/plugin command that calls:
+Codex mappings:
+- `agent-turn-complete` -> `task-end`
+- `agent-plan-complete` -> `plan-end`
 
-```bash
-agitiser-notify ingest --agent generic --payload '<json>'
-```
+Built-in label map:
+- `task-end` -> `task`
+- `plan-end` -> `plan`
 
-Where payload contains at minimum:
-
-```json
-{
-  "event_kind": "completed",
-  "cwd": "/absolute/path/to/project"
-}
-```
+Built-in default plan announcement:
+- `{{agent}} finished planning in {{project}}.`
 
 ## Template Variables
 
@@ -112,31 +112,40 @@ Templates use Handlebars-style placeholders:
 - `{{project}}` (project name inferred from `cwd`)
 - `{{cwd}}` (full current working directory when present)
 
-Template precedence is:
-
+Template precedence:
 1. Per-agent override (`--agent claude|codex|generic`)
 2. Global template
 3. Built-in default message
 
-Event-kind label precedence for `{{event_kind}}` is:
-
+Event-kind label precedence for `{{event_kind}}`:
 1. Per-agent label from `config event-kind ... --agent ...`
 2. Global label from `config event-kind ...`
 3. Built-in label map (`task-end` -> `task`, `plan-end` -> `plan`)
 4. Built-in humanized fallback (for example `task-completed` -> `task completed`)
 
-For Claude events, normalization maps:
-- `Stop` -> `task-end`
-- `SubagentStop` -> `plan-end` (can be disabled with `config subagent set --enabled false`)
-- `PermissionRequest` with `tool_name=ExitPlanMode` -> `plan-end`
+## OpenCode Manual Integration
 
-For Codex events, normalization maps:
-- `agent-turn-complete` -> `task-end`
-- `agent-plan-complete` -> `plan-end`
+OpenCode auto-setup is not implemented in this release.
 
-Built-in labels map:
-- `task-end` -> `task`
-- `plan-end` -> `plan`
+Use a manual hook/plugin command that calls:
 
-Built-in default plan announcement:
-- `{{agent}} finished planning in {{project}}.`
+```bash
+agitiser-notify ingest --agent generic --payload '<json>'
+```
+
+Payload must include at minimum:
+
+```json
+{
+  "event_kind": "completed",
+  "cwd": "/absolute/path/to/project"
+}
+```
+
+## Development
+
+```bash
+cargo fmt --all
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
+```
