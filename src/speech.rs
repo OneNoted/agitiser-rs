@@ -11,8 +11,7 @@ pub fn spd_say_path() -> Option<PathBuf> {
 }
 
 pub fn speak(event: &NormalizedEvent, state: &LocalState) -> Result<()> {
-    let spd_say = spd_say_path()
-        .context("spd-say not found in PATH; install speech-dispatcher")?;
+    let spd_say = spd_say_path().context("spd-say not found in PATH; install speech-dispatcher")?;
     let message = render_announcement_message(event, &state.templates, &state.event_kind_labels);
     let status = Command::new(&spd_say)
         .arg(message)
