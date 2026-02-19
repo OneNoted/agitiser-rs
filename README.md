@@ -6,10 +6,12 @@
 
 `agitiser-notify` is a Rust CLI that announces agent completion events using `speech-dispatcher` (`spd-say`).
 
+*the goofiest thing "I've" ever made...*
+
 ## Highlights
 
 - Announces terminal task/planning events for Claude, Codex, and generic payloads.
-- Supports managed integration setup/remove for Claude and Codex.
+- Supports automated setup with setup/remove for Claude and Codex.
 - Supports configurable speech templates and event-kind labels.
 - Supports toggling Claude subagent completion notifications.
 - Includes shell completions and a `doctor` command for health checks.
